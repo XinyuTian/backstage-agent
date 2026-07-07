@@ -1,0 +1,13 @@
+{
+  "name": "Your Name",
+  "location": "Los Angeles, CA",
+  "age_range": "25-35",
+  "genders": ["female"],
+  "ethnicities": ["open"],
+  "union_status": "non-union",
+  "skills": ["commercial acting", "improv", "dance"],
+  "avoid": ["unpaid travel", "explicit nudity"],
+  "preferred_roles": ["commercial", "film", "television", "voiceover"],
+  "max_travel_miles": 35,
+  "cover_note_template": "Hi, I'd love to be considered for this role. Thank you for your time."
+}

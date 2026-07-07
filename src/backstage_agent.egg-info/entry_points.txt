@@ -1,0 +1,2 @@
+[console_scripts]
+backstage-agent = backstage_agent.cli:main
