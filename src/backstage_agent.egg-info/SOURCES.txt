@@ -9,6 +9,7 @@ src/backstage_agent/cli.py
 src/backstage_agent/email_client.py
 src/backstage_agent/identifiers.py
 src/backstage_agent/models.py
+src/backstage_agent/notifier.py
 src/backstage_agent/parser.py
 src/backstage_agent/project_labels.py
 src/backstage_agent/project_page_parser.py
