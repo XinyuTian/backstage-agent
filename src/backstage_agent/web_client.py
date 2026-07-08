@@ -3,11 +3,22 @@ from __future__ import annotations
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from .browser_session import BrowserSessionError, fetch_authenticated_html
+from .settings import Settings
+
 
 class ProjectPageClient:
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings
+
     def fetch_html(self, url: str | None) -> str | None:
         if not url:
             return None
+        if self.settings and self.settings.use_browser_for_backstage:
+            try:
+                return fetch_authenticated_html(self.settings, url)
+            except BrowserSessionError:
+                return None
         request = Request(
             url,
             headers={

@@ -43,6 +43,8 @@ class ProjectNotice:
     project_date: date | None = None
     project_labels: list[str] = field(default_factory=list)
     project_key: str = ""
+    shooting_locations: str | None = None
+    shooting_dates: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,8 @@ class CastingNotice:
     project_labels: list[str] = field(default_factory=list)
     project_key: str = ""
     role_key: str = ""
+    shooting_locations: str | None = None
+    shooting_dates: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,3 +96,4 @@ class ApplicationDraft:
     cover_note: str
     dry_run: bool
     status: str
+    blocker_reason: str = ""

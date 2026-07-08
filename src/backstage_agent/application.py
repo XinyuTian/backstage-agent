@@ -11,13 +11,28 @@ class ApplicationService:
     def create_or_submit(self, decision: ScreeningDecision) -> ApplicationDraft:
         cover_note = self._cover_note(decision)
         status = "drafted"
+        blocker_reason = ""
         if not self.dry_run:
             status = "blocked_no_live_adapter"
+            blocker_reason = (
+                "Automatic Backstage submission is not available in the current "
+                "local runner. Submit manually or use an approved interactive browser session."
+            )
         return ApplicationDraft(
             notice=decision.notice,
             cover_note=cover_note,
             dry_run=self.dry_run,
             status=status,
+            blocker_reason=blocker_reason,
+        )
+
+    def failed_attempt(self, decision: ScreeningDecision, reason: str) -> ApplicationDraft:
+        return ApplicationDraft(
+            notice=decision.notice,
+            cover_note=self._cover_note(decision),
+            dry_run=self.dry_run,
+            status="failed_application_attempt",
+            blocker_reason=reason,
         )
 
     def _cover_note(self, decision: ScreeningDecision) -> str:

@@ -26,7 +26,7 @@
   "avoid": [
     "explicit nudity",
     "adult content",
-    "unpaid travel",
+    "unreimbursed travel expenses",
     "English voiceover",
     "voiceover",
     "voice over",
@@ -74,6 +74,7 @@
     "comfortable_with_kissing": "true",
     "comfortable_with_swimwear": "true",
     "comfortable_with_horror": "true",
+    "comfortable_with_unpaid_roles": "true",
     "can_sing": "false",
     "can_self_record": "false",
     "profile_location": "San Francisco Bay Area",

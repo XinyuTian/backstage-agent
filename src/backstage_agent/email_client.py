@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import email
 import imaplib
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from email.header import decode_header, make_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
@@ -15,15 +15,28 @@ class ImapEmailClient:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def fetch_messages(self, limit: int, days: int = 1) -> list[EmailMessage]:
+    def fetch_messages(
+        self,
+        limit: int,
+        days: int = 1,
+        target_date: date | None = None,
+    ) -> list[EmailMessage]:
         cutoff = datetime.now().astimezone() - timedelta(days=days)
+        start: datetime | None = None
+        end: datetime | None = None
+        if target_date is not None:
+            tz = datetime.now().astimezone().tzinfo
+            start = datetime.combine(target_date, time.min, tzinfo=tz)
+            end = start + timedelta(days=1)
         with imaplib.IMAP4_SSL(self.settings.imap_host, self.settings.imap_port) as client:
             client.login(self.settings.imap_username, self.settings.imap_password)
             client.select(self.settings.imap_folder)
             status, data = client.search(
                 None,
-                _search_query(
+                _search_query_for_date(
                     self.settings.email_search_query,
+                    start,
+                    end,
                     cutoff,
                     self.settings.email_subject_keywords,
                 ),
@@ -40,7 +53,7 @@ class ImapEmailClient:
                 raw = fetch_data[0][1]
                 parsed = email.message_from_bytes(raw)
                 message = _to_email_message(parsed)
-                if _is_within_window(message.received_at, cutoff) and _subject_matches(
+                if _is_in_requested_window(message.received_at, cutoff, start, end) and _subject_matches(
                     message.subject,
                     self.settings.email_subject_keywords,
                 ):
@@ -48,22 +61,38 @@ class ImapEmailClient:
             return messages
 
 
-def _search_query(base_query: str, cutoff: datetime, subject_keywords: list[str] | None = None) -> str:
-    date_text = cutoff.strftime("%d-%b-%Y")
+def _search_query_for_date(
+    base_query: str,
+    start: datetime | None,
+    end: datetime | None,
+    cutoff: datetime,
+    subject_keywords: list[str] | None = None,
+) -> str:
+    if start is not None and end is not None:
+        date_filter = f'SINCE "{start.strftime("%d-%b-%Y")}" BEFORE "{end.strftime("%d-%b-%Y")}"'
+    else:
+        date_filter = f'SINCE "{cutoff.strftime("%d-%b-%Y")}"'
     trimmed = base_query.strip()
     if trimmed.startswith("(") and trimmed.endswith(")"):
         trimmed = trimmed[1:-1].strip()
     subject_parts = " ".join(f'SUBJECT "{keyword}"' for keyword in subject_keywords or [])
     if subject_parts:
         trimmed = f"{trimmed} {subject_parts}"
-    return f'({trimmed} SINCE "{date_text}")'
+    return f"({trimmed} {date_filter})"
 
 
-def _is_within_window(received_at: datetime | None, cutoff: datetime) -> bool:
+def _is_in_requested_window(
+    received_at: datetime | None,
+    cutoff: datetime,
+    start: datetime | None,
+    end: datetime | None,
+) -> bool:
     if received_at is None:
         return True
     if received_at.tzinfo is None:
         received_at = received_at.astimezone()
+    if start is not None and end is not None:
+        return start <= received_at.astimezone(start.tzinfo) < end
     return received_at >= cutoff
 
 

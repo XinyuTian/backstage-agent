@@ -55,11 +55,30 @@ python -m backstage_agent.cli parse-sample sample-email.html
 python -m backstage_agent.cli decisions
 python -m backstage_agent.cli show-config
 python -m backstage_agent.cli ui
+python -m backstage_agent.cli backstage-login
+python -m backstage_agent.cli backstage-login-check
 ```
 
 `parse-sample` is useful for tuning the parser before connecting a real inbox.
 
 The `ui` command starts a local dashboard at `http://127.0.0.1:8765` for searching and reviewing saved screening decisions.
+
+## Persistent Backstage Login
+
+For independent runs that need authenticated Backstage pages, use a dedicated local browser profile:
+
+```bash
+python -m backstage_agent.cli backstage-login
+python -m backstage_agent.cli backstage-login-check
+```
+
+The first command opens a browser using `BACKSTAGE_BROWSER_PROFILE_PATH` so you can log in once. The second command checks whether that stored session is still logged in. Set `USE_BROWSER_FOR_BACKSTAGE=true` to let scans fetch Backstage pages through that authenticated profile.
+
+`BACKSTAGE_BROWSER_HEADLESS=false` is the default because Backstage may challenge headless browser sessions. This means an automated run may briefly open a browser window on your logged-in Mac when it needs authenticated Backstage pages.
+
+`BACKSTAGE_BROWSER_CHANNEL=chrome` makes Playwright use your installed Google Chrome when available. If Backstage or Cloudflare blocks the automated browser, the agent should stop and report that status instead of trying to bypass the block.
+
+Do not store your Backstage password in `.env`; the browser profile stores session cookies locally instead.
 
 ## Project Status
 

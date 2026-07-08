@@ -15,7 +15,7 @@ class RoleScreener:
         self.settings = settings
         self.profile = profile
         self._llm_calls = 0
-        self._client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+        self._client = _llm_client(settings)
 
     def screen(self, notice: CastingNotice) -> ScreeningDecision:
         local_decision = self._local_screen(notice)
@@ -26,7 +26,10 @@ class RoleScreener:
                 notice=notice,
                 score=0.0,
                 should_apply=False,
-                reasons=["Rejected because LLM screening was unavailable: no API key or call budget."],
+                reasons=[
+                    "Rejected because first-pass LLM screening was unavailable: "
+                    "no API key or call budget."
+                ],
             )
         return self._llm_screen(notice)
 
@@ -118,6 +121,9 @@ class RoleScreener:
                         "attribute says comfortable_with_horror is true, do not treat "
                         "horror as a concern by itself. Do not infer explicit content "
                         "from horror, romance, or mature themes unless the notice says so. "
+                        "Do not reject unpaid roles or list unpaid compensation as a concern "
+                        "when the actor profile says comfortable_with_unpaid_roles is true. "
+                        "Treat unreimbursed travel expenses as different from an unpaid role. "
                         "Only include concerns that are concrete conflicts or open questions "
                         "from the casting notice; do not list generic actor boundaries as "
                         "concerns when the notice does not mention them. Respect explicit "
@@ -150,6 +156,20 @@ class RoleScreener:
             concerns=list(data.get("concerns", [])),
             llm_used=True,
         )
+
+
+def _llm_client(settings: Settings) -> OpenAI | None:
+    provider = settings.llm_provider.strip().lower()
+    if provider == "openai":
+        return OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+    if provider in {"ai_builder", "aibuilder"}:
+        if not settings.ai_builder_api_key:
+            return None
+        return OpenAI(
+            api_key=settings.ai_builder_api_key,
+            base_url=settings.ai_builder_base_url,
+        )
+    raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
 
 
 def _age_range(text: str) -> tuple[int, int] | None:

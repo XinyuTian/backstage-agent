@@ -9,8 +9,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string>
-    <string>-lc</string>
-    <string>cd /Users/sarahtxy/Documents/backstage &amp;&amp; mkdir -p logs &amp;&amp; echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Starting daily Backstage scan" &amp;&amp; /Users/sarahtxy/Documents/backstage/.venv/bin/python -m backstage_agent.cli scan --days 1 --limit 25 &amp;&amp; echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Finished daily Backstage scan"</string>
+    <string>/Users/sarahtxy/dev/backstage_agent/scripts/daily_scan.sh</string>
   </array>
 
   <key>StartCalendarInterval</key>
@@ -22,9 +21,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/sarahtxy/Documents/backstage/logs/daily-scan.out.log</string>
+  <string>/Users/sarahtxy/dev/backstage_agent/logs/daily-scan.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/sarahtxy/Documents/backstage/logs/daily-scan.err.log</string>
+  <string>/Users/sarahtxy/dev/backstage_agent/logs/daily-scan.err.log</string>
 </dict>
 </plist>

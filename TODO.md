@@ -28,6 +28,7 @@
 ## Backstage Page Access
 
 - Use the logged-in browser session to open each Apply link and read the full role page.
+- Send a notification when `backstage-login-check` reports that the persistent browser profile is logged out.
 - Compare email summary details with the full Backstage page before deciding.
 - Capture application questions from the page and pause for user input when needed.
 - Avoid submitting final applications without explicit confirmation until we trust the flow.

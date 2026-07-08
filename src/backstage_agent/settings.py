@@ -26,10 +26,16 @@ class Settings:
     actor_profile_path: Path
     database_path: Path
     dry_run: bool
+    llm_provider: str = "openai"
     ai_builder_api_key: str | None = None
     ai_builder_base_url: str = "https://space.ai-builders.com/backend/v1"
+    reviewer_provider: str = "ai_builder"
     reviewer_model: str = "deepseek-v4-pro"
     max_reviewer_calls_per_scan: int = 20
+    browser_profile_path: Path = Path("browser_profiles/backstage")
+    use_browser_for_backstage: bool = False
+    backstage_browser_headless: bool = False
+    backstage_browser_channel: str = "chrome"
 
 
 def load_settings() -> Settings:
@@ -43,6 +49,7 @@ def load_settings() -> Settings:
         email_search_query=os.getenv("EMAIL_SEARCH_QUERY", '(FROM "backstage")'),
         email_subject_keywords=_list_env("EMAIL_SUBJECT_KEYWORDS", "basic filter"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        llm_provider=os.getenv("LLM_PROVIDER", "openai"),
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
         max_llm_calls_per_scan=int(os.getenv("MAX_LLM_CALLS_PER_SCAN", "20")),
         ai_builder_api_key=os.getenv("AI_BUILDER_API_KEY") or None,
@@ -50,12 +57,19 @@ def load_settings() -> Settings:
             "AI_BUILDER_BASE_URL",
             "https://space.ai-builders.com/backend/v1",
         ),
+        reviewer_provider=os.getenv("REVIEWER_PROVIDER", "ai_builder"),
         reviewer_model=os.getenv("REVIEWER_MODEL", "deepseek-v4-pro"),
         max_reviewer_calls_per_scan=int(os.getenv("MAX_REVIEWER_CALLS_PER_SCAN", "20")),
         min_match_score=float(os.getenv("MIN_MATCH_SCORE", "0.72")),
         actor_profile_path=Path(os.getenv("ACTOR_PROFILE_PATH", "profile.example.json")),
         database_path=Path(os.getenv("DATABASE_PATH", "backstage_agent.sqlite3")),
         dry_run=_truthy(os.getenv("DRY_RUN", "true")),
+        browser_profile_path=Path(
+            os.getenv("BACKSTAGE_BROWSER_PROFILE_PATH", "browser_profiles/backstage")
+        ),
+        use_browser_for_backstage=_truthy(os.getenv("USE_BROWSER_FOR_BACKSTAGE", "false")),
+        backstage_browser_headless=_truthy(os.getenv("BACKSTAGE_BROWSER_HEADLESS", "false")),
+        backstage_browser_channel=os.getenv("BACKSTAGE_BROWSER_CHANNEL", "chrome"),
     )
 
 

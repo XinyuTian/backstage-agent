@@ -208,3 +208,35 @@ def test_parse_digest_discovers_projects_without_screening_roles():
         ("Gay Audio Romance Project", "https://example.com/project-a"),
         ("Tejidos", "https://example.com/project-b"),
     ]
+
+
+def test_parse_project_notices_trims_previous_seeking_block():
+    message = EmailMessage(
+        message_id="m7",
+        subject="5 New Roles Available for basic filter - Jul 4",
+        sender="Backstage",
+        received_at=None,
+        html="",
+        text="""
+Seeking talent from:
+Boston, MA; Pawtucket, RI; New Haven, CT; New York, NY; Los Angeles, CA…
+More
+International Highlight
+Lead, 18+
+Apply
+Stock Library
+$ Paid
+Nonunion
+Posted 22 hours ago
+Video Library Video Shoot
+Background Actors
+Background / Extra, 20-60
+Apply
+""",
+    )
+
+    projects = parse_project_notices(message)
+
+    assert [project.title for project in projects] == ["Video Library Video Shoot"]
+    assert "Boston, MA" not in projects[0].description
+    assert "International Highlight" not in projects[0].description

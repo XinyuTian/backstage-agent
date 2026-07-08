@@ -26,6 +26,7 @@ def parse_project_notices(message: EmailMessage) -> list[ProjectNotice]:
 
     for chunk in chunks:
         cleaned = _strip_digest_footer(_collapse_space(chunk))
+        cleaned = _project_chunk_only(cleaned)
         if len(cleaned) < 40 or not _is_project_chunk(cleaned):
             continue
         title = _project_title(cleaned)
@@ -302,6 +303,24 @@ def _split_notice_chunks(text: str) -> list[str]:
     separators = re.compile(r"\n(?=(?:Project|Role|Casting|Now Casting|Seeking)\b)", re.I)
     chunks = separators.split(text)
     return chunks if len(chunks) > 1 else [text]
+
+
+def _project_chunk_only(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return text
+    if not lines[0].lower().startswith("seeking talent from:"):
+        return text
+    posted_index = next(
+        (index for index, line in enumerate(lines) if line.lower().startswith("posted ")),
+        None,
+    )
+    if posted_index is None:
+        return ""
+    start = posted_index
+    while start > 0 and _is_digest_metadata(lines[start - 1]):
+        start -= 1
+    return "\n".join(lines[start:])
 
 
 def _is_project_chunk(text: str) -> bool:

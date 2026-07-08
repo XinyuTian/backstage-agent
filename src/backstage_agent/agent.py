@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from .application import ApplicationService
 from .email_client import ImapEmailClient
@@ -32,10 +33,14 @@ class BackstageAgent:
         self.reviewer = DecisionReviewer(settings, self.profile)
         self.applications = ApplicationService(self.profile, settings.dry_run)
         self.store = DecisionStore(settings.database_path)
-        self.project_pages = ProjectPageClient()
+        self.project_pages = ProjectPageClient(settings)
 
-    def scan(self, limit: int, days: int = 1) -> ScanResult:
-        messages = self.email_client.fetch_messages(limit=limit, days=days)
+    def scan(self, limit: int, days: int = 1, target_date: date | None = None) -> ScanResult:
+        messages = self.email_client.fetch_messages(
+            limit=limit,
+            days=days,
+            target_date=target_date,
+        )
         decisions: list[ScreeningDecision] = []
         application_drafts: list[ApplicationDraft] = []
         projects_seen = 0
@@ -51,6 +56,12 @@ class BackstageAgent:
                 project_id = self.store.record_project(project)
                 html = self.project_pages.fetch_html(project.project_url)
                 page_roles = parse_project_page_roles(project, html or "") if html else []
+                if page_roles:
+                    self.store.update_project_info(
+                        project_id,
+                        page_roles[0].shooting_locations,
+                        page_roles[0].shooting_dates,
+                    )
                 for role in page_roles:
                     if self.store.role_exists(role.role_key) or self.store.decision_exists(role.role_key):
                         continue
@@ -66,7 +77,13 @@ class BackstageAgent:
                     review = self.reviewer.review(notice)
                     self.store.record_review(decision_id, review)
                     if review.approved:
-                        draft = self.applications.create_or_submit(decision)
+                        try:
+                            draft = self.applications.create_or_submit(decision)
+                        except Exception as exc:  # noqa: BLE001
+                            draft = self.applications.failed_attempt(
+                                decision,
+                                f"{exc.__class__.__name__}: {exc}",
+                            )
                         self.store.record_application(draft)
                         application_drafts.append(draft)
 

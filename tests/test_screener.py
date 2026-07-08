@@ -52,6 +52,55 @@ def test_local_screener_rejects_avoid_terms(tmp_path):
     assert decision.concerns == ["explicit nudity"]
 
 
+def test_local_screener_does_not_reject_unpaid_roles_when_profile_allows_them(tmp_path):
+    profile = ActorProfile(
+        name="Actor",
+        location="Los Angeles",
+        age_range="25-35",
+        genders=["female"],
+        ethnicities=["open"],
+        union_status="non-union",
+        skills=["improv"],
+        avoid=["unreimbursed travel expenses"],
+        preferred_roles=["film"],
+        max_travel_miles=35,
+        cover_note_template="Hello",
+        attributes={"comfortable_with_unpaid_roles": "true"},
+    )
+    settings = Settings(
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user",
+        imap_password="pass",
+        imap_folder="INBOX",
+        email_search_query="ALL",
+        email_subject_keywords=[],
+        openai_api_key=None,
+        llm_model="gpt-4o-mini",
+        max_llm_calls_per_scan=1,
+        min_match_score=0.72,
+        actor_profile_path=tmp_path / "profile.json",
+        database_path=tmp_path / "db.sqlite3",
+        dry_run=True,
+    )
+    notice = CastingNotice(
+        source_message_id="m1",
+        title="That Night at Trixies - Sierra",
+        project="That Night at Trixies",
+        role="Sierra",
+        location=None,
+        compensation="Unpaid",
+        description="Supporting, 20-25. Improv-friendly short film role.",
+        application_url=None,
+        raw_text="Short Film\nSierra\nSupporting, Female, 20-25\nImprov-friendly role.\nUnpaid",
+    )
+
+    decision = RoleScreener(settings, profile).screen(notice)
+
+    assert decision.should_apply is True
+    assert "unpaid" not in " ".join(decision.concerns).lower()
+
+
 def test_local_screener_rejects_gender_mismatch_before_llm(tmp_path):
     profile = ActorProfile(
         name="Actor",

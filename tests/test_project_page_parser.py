@@ -46,6 +46,7 @@ def test_parse_project_page_roles_from_expanded_backstage_text():
 
     assert [role.title for role in roles] == ["Lunar 5 - Dan", "Lunar 5 - Clara"]
     assert roles[0].location == "Seeking talent Worldwide"
+    assert roles[0].shooting_locations == "Remote"
     assert roles[0].project_labels == ["Animation"]
     assert "Captain of the LUNAR 5" in roles[0].description
     assert "Rate: $500 flat rate" in roles[1].compensation
@@ -78,3 +79,32 @@ def test_parse_project_page_roles_adds_backstage_page_labels():
 
     assert roles[0].title == "Behind The Confessional - Zella Marchand"
     assert roles[0].project_labels == ["FEATURE FILM"]
+
+
+def test_parse_project_page_roles_adds_shooting_dates_and_locations():
+    project = ProjectNotice(
+        source_message_id="m1",
+        title="Video Library Video Shoot",
+        project_url="https://example.com/video-library",
+        description="Video shoot for a stock library.",
+        raw_text="Video shoot for a stock library.",
+    )
+    html = """
+<main>
+<h1>Video Library Video Shoot</h1>
+<h2>Roles in this project</h2>
+<p>Background Actors</p>
+<p>Background / Extra, 20-60</p>
+<p>For a wide variety of actors.</p>
+<h2>Dates &amp; Locations</h2>
+<p>Shoots July 11 in Los Angeles, CA.</p>
+<h2>Compensation &amp; Contract</h2>
+<p>Background Actors: Background</p>
+<p>Rate: $350 flat rate</p>
+</main>
+"""
+
+    roles = parse_project_page_roles(project, html)
+
+    assert roles[0].shooting_dates == "Shoots July 11 in Los Angeles, CA"
+    assert "Shooting dates: Shoots July 11 in Los Angeles, CA" in roles[0].raw_text

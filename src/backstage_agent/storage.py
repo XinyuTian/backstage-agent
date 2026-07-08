@@ -34,9 +34,9 @@ class DecisionStore:
                 INSERT INTO decisions (
                   source_message_id, title, application_url, score, should_apply,
                   reasons_json, concerns_json, llm_used, notice_json, project_date,
-                  project_key, role_key
+                  project_key, role_key, shooting_locations, shooting_dates
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision.notice.source_message_id,
@@ -53,6 +53,8 @@ class DecisionStore:
                     else None,
                     project_key,
                     role_key,
+                    decision.notice.shooting_locations,
+                    decision.notice.shooting_dates,
                 ),
             )
             return int(cursor.lastrowid)
@@ -68,9 +70,9 @@ class DecisionStore:
                 """
                 INSERT INTO projects (
                   source_message_id, title, project_url, description, raw_text, project_date,
-                  project_key
+                  project_key, shooting_locations, shooting_dates
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project.source_message_id,
@@ -80,9 +82,30 @@ class DecisionStore:
                     project.raw_text,
                     project.project_date.isoformat() if project.project_date else None,
                     project_key,
+                    project.shooting_locations,
+                    project.shooting_dates,
                 ),
             )
             return int(cursor.lastrowid)
+
+    def update_project_info(
+        self,
+        project_id: int,
+        shooting_locations: str | None = None,
+        shooting_dates: str | None = None,
+    ) -> None:
+        if not shooting_locations and not shooting_dates:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE projects
+                SET shooting_locations = COALESCE(?, shooting_locations),
+                    shooting_dates = COALESCE(?, shooting_dates)
+                WHERE id = ?
+                """,
+                (shooting_locations, shooting_dates, project_id),
+            )
 
     def record_role(self, project_id: int, notice: CastingNotice) -> int:
         project_key = notice.project_key or build_project_key(
@@ -103,9 +126,9 @@ class DecisionStore:
                 INSERT INTO roles (
                   project_id, project_key, role_key, source_message_id, title, project, role, location,
                   compensation, application_url, description, raw_text, project_date,
-                  notice_json
+                  notice_json, shooting_locations, shooting_dates
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project_id,
@@ -122,6 +145,8 @@ class DecisionStore:
                     notice.raw_text,
                     notice.project_date.isoformat() if notice.project_date else None,
                     json.dumps({**asdict(notice), "project_key": project_key, "role_key": role_key}, default=str),
+                    notice.shooting_locations,
+                    notice.shooting_dates,
                 ),
             )
             return int(cursor.lastrowid)
@@ -186,8 +211,10 @@ class DecisionStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO applications (title, application_url, cover_note, dry_run, status)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO applications (
+                  title, application_url, cover_note, dry_run, status, blocker_reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft.notice.title,
@@ -195,6 +222,7 @@ class DecisionStore:
                     draft.cover_note,
                     int(draft.dry_run),
                     draft.status,
+                    draft.blocker_reason,
                 ),
             )
 
@@ -255,6 +283,7 @@ class DecisionStore:
                       d.id, d.created_at, d.project_date, d.title, d.application_url,
                       d.score, d.should_apply, d.reasons_json, d.concerns_json,
                       d.llm_used, d.notice_json, d.project_key, d.role_key,
+                      d.shooting_locations, d.shooting_dates,
                       d.reviewer_status, d.reviewer_score,
                       d.reviewer_reasons_json, d.reviewer_concerns_json, d.reviewer_model,
                       (
@@ -263,7 +292,14 @@ class DecisionStore:
                         WHERE a.title = d.title
                         ORDER BY a.id DESC
                         LIMIT 1
-                      ) AS application_status
+                      ) AS application_status,
+                      (
+                        SELECT a.blocker_reason
+                        FROM applications a
+                        WHERE a.title = d.title
+                        ORDER BY a.id DESC
+                        LIMIT 1
+                      ) AS application_blocker_reason
                     FROM decisions d
                     {where}
                     ORDER BY d.id DESC
@@ -360,7 +396,9 @@ class DecisionStore:
                   reviewer_model TEXT,
                   notice_json TEXT NOT NULL,
                   project_key TEXT,
-                  role_key TEXT
+                  role_key TEXT,
+                  shooting_locations TEXT,
+                  shooting_dates TEXT
                 );
                 CREATE TABLE IF NOT EXISTS applications (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -369,7 +407,8 @@ class DecisionStore:
                   application_url TEXT,
                   cover_note TEXT NOT NULL,
                   dry_run INTEGER NOT NULL,
-                  status TEXT NOT NULL
+                  status TEXT NOT NULL,
+                  blocker_reason TEXT
                 );
                 CREATE TABLE IF NOT EXISTS projects (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -380,7 +419,9 @@ class DecisionStore:
                   description TEXT NOT NULL,
                   raw_text TEXT NOT NULL,
                   project_date TEXT,
-                  project_key TEXT
+                  project_key TEXT,
+                  shooting_locations TEXT,
+                  shooting_dates TEXT
                 );
                 CREATE TABLE IF NOT EXISTS roles (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -399,6 +440,8 @@ class DecisionStore:
                   raw_text TEXT NOT NULL,
                   project_date TEXT,
                   notice_json TEXT NOT NULL,
+                  shooting_locations TEXT,
+                  shooting_dates TEXT,
                   FOREIGN KEY(project_id) REFERENCES projects(id)
                 );
                 """
@@ -416,6 +459,8 @@ class DecisionStore:
                 "reviewer_model": "TEXT",
                 "project_key": "TEXT",
                 "role_key": "TEXT",
+                "shooting_locations": "TEXT",
+                "shooting_dates": "TEXT",
             }.items():
                 if column_name not in columns:
                     conn.execute(f"ALTER TABLE decisions ADD COLUMN {column_name} {column_type}")
@@ -424,12 +469,23 @@ class DecisionStore:
             }
             if "project_key" not in project_columns:
                 conn.execute("ALTER TABLE projects ADD COLUMN project_key TEXT")
+            for column_name in ("shooting_locations", "shooting_dates"):
+                if column_name not in project_columns:
+                    conn.execute(f"ALTER TABLE projects ADD COLUMN {column_name} TEXT")
             role_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(roles)").fetchall()
             }
             for column_name in ("project_key", "role_key"):
                 if column_name not in role_columns:
                     conn.execute(f"ALTER TABLE roles ADD COLUMN {column_name} TEXT")
+            for column_name in ("shooting_locations", "shooting_dates"):
+                if column_name not in role_columns:
+                    conn.execute(f"ALTER TABLE roles ADD COLUMN {column_name} TEXT")
+            application_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(applications)").fetchall()
+            }
+            if "blocker_reason" not in application_columns:
+                conn.execute("ALTER TABLE applications ADD COLUMN blocker_reason TEXT")
             _backfill_keys(conn)
             conn.execute(
                 """
