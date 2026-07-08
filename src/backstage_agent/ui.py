@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .project_labels import extract_backstage_project_labels
 from .settings import load_settings
 from .storage import DecisionStore
 
@@ -47,7 +48,7 @@ class DashboardServer:
 
 def _render_index(store: DecisionStore, settings, params: dict[str, list[str]]) -> str:
     query = _param(params, "q")
-    decision = _param(params, "decision", "all")
+    decision = _normalize_decision(_param(params, "decision", "all"))
     method = _param(params, "method", "all")
     date_from = _date_param(params, "date_from", default=_default_date_from())
     date_to = _date_param(params, "date_to")
@@ -116,9 +117,10 @@ def _render_index(store: DecisionStore, settings, params: dict[str, list[str]]) 
         <span class="toolbar-label">Status</span>
         <nav class="status-tabs" aria-label="Decision status">
           {_tab("All", counts["total"] or 0, "decision", "all", decision, base_filters)}
-          {_tab("Apply", counts["apply_count"] or 0, "decision", "apply", decision, base_filters)}
-          {_tab("Reject", counts["reject_count"] or 0, "decision", "reject", decision, base_filters)}
-          {_tab("Skipped", counts["skipped_count"] or 0, "decision", "skipped", decision, base_filters)}
+          {_tab("Approved", counts["passed_count"] or 0, "decision", "approved", decision, base_filters)}
+          {_tab("Submitted", counts["applied_count"] or 0, "decision", "applied", decision, base_filters)}
+          {_tab("Needs Check", counts["needs_check_count"] or 0, "decision", "needs_check", decision, base_filters)}
+          {_tab("Rejected", counts["reject_count"] or 0, "decision", "reject", decision, base_filters)}
         </nav>
       </div>
       <div class="toolbar-group method-group">
@@ -154,11 +156,15 @@ def _render_row(row, params: dict[str, list[str]], selected_id: str) -> str:
     next_params["selected"] = str(row["id"])
     href = f"/?{urlencode(next_params)}"
     status, status_class = _decision_status(row)
+    labels = _project_label_chips(_project_labels_from_row(row))
     selected_class = " selected" if str(row["id"]) == selected_id else ""
     return f"""
     <a class="row{selected_class}" href="{_esc(href)}" data-decision-row="{_esc(row["id"])}">
       <div class="row-top">
-        <span class="pill {status_class}">{status}</span>
+        <div class="row-labels">
+          <span class="pill {status_class}">{status}</span>
+          {labels}
+        </div>
         <span class="score">{float(row["score"]):.2f}</span>
       </div>
       <strong>{_esc(row["title"])}</strong>
@@ -175,18 +181,22 @@ def _render_detail(row) -> str:
     concerns = json.loads(row["concerns_json"])
     status, status_class = _decision_status(row)
     url = row["application_url"]
+    labels = _project_label_chips(_project_labels_from_notice(notice), "label-strip detail-labels")
     return f"""
       <div class="detail-header">
         <span class="pill {status_class}">{status}</span>
         <span class="score large">{float(row["score"]):.2f}</span>
       </div>
       <h2>{_esc(row["title"])}</h2>
-      <div class="meta">Project date {_esc(_project_date(row))} · scanned {_esc(row["created_at"])} · {_screening_label(row)}</div>
+      {labels}
+      <div class="meta">Project date {_esc(_project_date(row))} · scanned {_esc(row["created_at"])} · {_screening_label(row)} · {_application_label(row)}</div>
       {_link(url)}
       <h3>Reasons</h3>
       {_list(reasons)}
       <h3>Concerns</h3>
       {_list(concerns) if concerns else '<p class="muted">None recorded.</p>'}
+      <h3>Reviewer</h3>
+      {_reviewer_detail(row)}
       <h3>Parsed Notice</h3>
       <dl>
         {_field("Project", notice.get("project"))}
@@ -212,17 +222,85 @@ def _list(items: list[str]) -> str:
     return "<ul>" + "".join(f"<li>{_esc(item)}</li>" for item in items) + "</ul>"
 
 
+def _reviewer_detail(row) -> str:
+    status = row["reviewer_status"]
+    if not row["should_apply"]:
+        return '<p class="muted">Not reviewed because the first pass rejected it.</p>'
+    if not status:
+        return '<p class="muted">No reviewer result recorded yet.</p>'
+    reasons = _json_list(row["reviewer_reasons_json"])
+    concerns = _json_list(row["reviewer_concerns_json"])
+    score = row["reviewer_score"]
+    score_text = f" · score {float(score):.2f}" if score is not None else ""
+    model_text = f" · {_esc(row['reviewer_model'])}" if row["reviewer_model"] else ""
+    return (
+        f'<p class="meta">Reviewer status: {_esc(status)}{score_text}{model_text}</p>'
+        f"{_list(reasons) if reasons else '<p class=\"muted\">No reviewer reasons recorded.</p>'}"
+        f"{'<p class=\"muted\">Reviewer concerns:</p>' + _list(concerns) if concerns else ''}"
+    )
+
+
+def _json_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return [value]
+    return [str(item) for item in data]
+
+
+def _project_labels_from_row(row) -> list[str]:
+    try:
+        notice = json.loads(row["notice_json"])
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return _project_labels_from_notice(notice)
+
+
+def _project_labels_from_notice(notice: dict) -> list[str]:
+    labels = notice.get("project_labels") or []
+    if labels:
+        return [str(label) for label in labels if str(label).strip()]
+    return extract_backstage_project_labels(
+        "\n".join(
+            str(part)
+            for part in [notice.get("raw_text"), notice.get("description")]
+            if part
+        )
+    )
+
+
+def _project_label_chips(labels: list[str], class_name: str = "label-strip") -> str:
+    if not labels:
+        return ""
+    chips = "".join(f'<span class="project-label">{_esc(label)}</span>' for label in labels)
+    return f'<div class="{_esc(class_name)}">{chips}</div>'
+
+
 def _decision_status(row) -> tuple[str, str]:
+    if row["should_apply"] and row["application_status"] == "submitted_backstage":
+        return "Submitted", "applied"
+    if row["should_apply"] and row["reviewer_status"] == "approved":
+        return "Approved", "passed"
     if row["should_apply"]:
-        return "Apply", "apply"
-    reasons = json.loads(row["reasons_json"])
-    if any("Skipped LLM screening" in reason for reason in reasons):
-        return "Skipped", "skipped"
-    return "Reject", "reject"
+        return "Needs Check", "hold"
+    return "Rejected", "reject"
 
 
 def _screening_label(row) -> str:
     return "LLM screening" if row["llm_used"] else "Local rule screening"
+
+
+def _application_label(row) -> str:
+    status = row["application_status"]
+    if status == "submitted_backstage":
+        return "Submitted on Backstage"
+    if status == "drafted":
+        return "Reviewer approved; ready to submit"
+    if status:
+        return f"Application status: {status}"
+    return "No application draft"
 
 
 def _project_date(row) -> str:
@@ -269,6 +347,12 @@ def _method_tab(
 def _param(params: dict[str, list[str]], key: str, default: str = "") -> str:
     values = params.get(key)
     return values[-1] if values else default
+
+
+def _normalize_decision(value: str) -> str:
+    if value in {"apply", "passed"}:
+        return "approved"
+    return value
 
 
 def _date_param(params: dict[str, list[str]], key: str, default: str = "") -> str:
@@ -322,8 +406,12 @@ _CSS = """
   --line: #d8dde6;
   --accent: #167b6b;
   --accent-dark: #0c5f52;
-  --apply-bg: #e8f6ef;
-  --apply-text: #126340;
+  --passed-bg: #eef3ff;
+  --passed-text: #3156a3;
+  --applied-bg: #e8f6ef;
+  --applied-text: #126340;
+  --hold-bg: #fff4d7;
+  --hold-text: #805500;
   --reject-bg: #fbecec;
   --reject-text: #9a2d2d;
 }
@@ -538,6 +626,33 @@ button, .button, .shortcut-button {
 .row.selected strong { color: var(--accent-dark); }
 .row strong { display: block; margin: 8px 0 6px; line-height: 1.35; }
 .row-top, .detail-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.row-labels {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.label-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 7px;
+}
+.row-labels .label-strip { margin: 0; }
+.detail-labels { margin: 0 0 10px; }
+.project-label {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d5dde8;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: #f8fafc;
+  color: #526071;
+  font-size: 11px;
+  font-weight: 800;
+}
 .pill {
   min-width: 62px;
   min-height: 24px;
@@ -549,9 +664,10 @@ button, .button, .shortcut-button {
   font-size: 12px;
   font-weight: 700;
 }
-.apply { background: var(--apply-bg); color: var(--apply-text); }
+.passed { background: var(--passed-bg); color: var(--passed-text); }
+.applied { background: var(--applied-bg); color: var(--applied-text); }
+.hold { background: var(--hold-bg); color: var(--hold-text); }
 .reject { background: var(--reject-bg); color: var(--reject-text); }
-.skipped { background: #eef1f5; color: #526071; }
 .score { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 700; }
 .score.large { font-size: 28px; color: var(--text); }
 ul { padding-left: 20px; }

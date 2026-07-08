@@ -1,7 +1,7 @@
 {
   "name": "Xinyu Tian",
   "location": "Fremont, CA",
-  "age_range": "25-45",
+  "age_range": "25-40",
   "genders": ["female"],
   "ethnicities": ["Asian"],
   "union_status": "non-union",
@@ -74,6 +74,7 @@
     "comfortable_with_kissing": "true",
     "comfortable_with_swimwear": "true",
     "comfortable_with_horror": "true",
+    "can_sing": "false",
     "can_self_record": "false",
     "profile_location": "San Francisco Bay Area",
     "english_native_speaker": "false",

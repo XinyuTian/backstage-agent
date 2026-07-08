@@ -41,6 +41,8 @@ class ProjectNotice:
     description: str
     raw_text: str
     project_date: date | None = None
+    project_labels: list[str] = field(default_factory=list)
+    project_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,6 +57,9 @@ class CastingNotice:
     application_url: str | None
     raw_text: str
     project_date: date | None = None
+    project_labels: list[str] = field(default_factory=list)
+    project_key: str = ""
+    role_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,20 @@ class ScreeningDecision:
     reasons: list[str]
     concerns: list[str] = field(default_factory=list)
     llm_used: bool = False
+
+
+@dataclass(frozen=True)
+class ReviewDecision:
+    notice: CastingNotice
+    status: str
+    score: float
+    reasons: list[str]
+    concerns: list[str] = field(default_factory=list)
+    model: str = ""
+
+    @property
+    def approved(self) -> bool:
+        return self.status == "approved"
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,9 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
+from .identifiers import project_key, role_key
 from .models import CastingNotice, EmailMessage, ProjectNotice
+from .project_labels import extract_backstage_project_labels
 
 
 APPLICATION_WORDS = ("apply", "submit", "audition", "casting")
@@ -27,7 +29,8 @@ def parse_project_notices(message: EmailMessage) -> list[ProjectNotice]:
         if len(cleaned) < 40 or not _is_project_chunk(cleaned):
             continue
         title = _project_title(cleaned)
-        key = title.lower()
+        project_url = _lookup_project_link(title, links_by_title)
+        key = project_key(title, project_url, project_date)
         if key in seen:
             continue
         seen.add(key)
@@ -35,10 +38,12 @@ def parse_project_notices(message: EmailMessage) -> list[ProjectNotice]:
             ProjectNotice(
                 source_message_id=message.message_id,
                 title=title,
-                project_url=_lookup_project_link(title, links_by_title),
+                project_url=project_url,
                 description=cleaned[:3000],
                 raw_text=cleaned,
                 project_date=project_date,
+                project_labels=extract_backstage_project_labels(cleaned),
+                project_key=key,
             )
         )
 
@@ -53,6 +58,8 @@ def parse_project_notices(message: EmailMessage) -> list[ProjectNotice]:
             description=notice.description,
             raw_text=notice.raw_text,
             project_date=notice.project_date,
+            project_labels=notice.project_labels,
+            project_key=notice.project_key,
         )
         for notice in parse_casting_notices(message)
     ]
@@ -97,6 +104,23 @@ def parse_casting_notices(message: EmailMessage) -> list[CastingNotice]:
                 application_url=_best_application_link(links),
                 raw_text=cleaned,
                 project_date=project_date,
+                project_labels=extract_backstage_project_labels(cleaned),
+                project_key=project_key(
+                    _field(cleaned, "Project") or _first_line(cleaned) or message.subject,
+                    _best_application_link(links),
+                    project_date,
+                ),
+                role_key=role_key(
+                    project_key(
+                        _field(cleaned, "Project") or _first_line(cleaned) or message.subject,
+                        _best_application_link(links),
+                        project_date,
+                    ),
+                    _best_application_link(links),
+                    _field(cleaned, "Role"),
+                    _first_line(cleaned) or message.subject,
+                    cleaned,
+                ),
             )
         )
     return notices
@@ -124,6 +148,15 @@ def _parse_structured_notice(
         application_url=_best_application_link(links),
         raw_text=cleaned,
         project_date=project_date,
+        project_labels=extract_backstage_project_labels(cleaned),
+        project_key=project_key(project or _first_line(cleaned) or message.subject, _best_application_link(links), project_date),
+        role_key=role_key(
+            project_key(project or _first_line(cleaned) or message.subject, _best_application_link(links), project_date),
+            _best_application_link(links),
+            role,
+            f"{project} - {role}" if project and role else _first_line(cleaned) or message.subject,
+            cleaned,
+        ),
     )
 
 
@@ -173,6 +206,8 @@ def _parse_digest_notices(
                 if part
             )
             notices.append(
+                # Digest fallback roles can point directly at role URLs.
+                # Use the Backstage role slug when present, otherwise a deterministic text key.
                 CastingNotice(
                     source_message_id=message.message_id,
                     title=f"{current_project_title} - {role_name}",
@@ -184,6 +219,17 @@ def _parse_digest_notices(
                     application_url=application_url,
                     raw_text=raw_text,
                     project_date=project_date,
+                    project_labels=extract_backstage_project_labels(
+                        current_project_description or raw_text
+                    ),
+                    project_key=project_key(current_project_title, application_url, project_date),
+                    role_key=role_key(
+                        project_key(current_project_title, application_url, project_date),
+                        application_url,
+                        role_name,
+                        f"{current_project_title} - {role_name}",
+                        raw_text,
+                    ),
                 )
             )
 

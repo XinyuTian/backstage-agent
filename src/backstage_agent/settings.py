@@ -26,6 +26,10 @@ class Settings:
     actor_profile_path: Path
     database_path: Path
     dry_run: bool
+    ai_builder_api_key: str | None = None
+    ai_builder_base_url: str = "https://space.ai-builders.com/backend/v1"
+    reviewer_model: str = "deepseek-v4-pro"
+    max_reviewer_calls_per_scan: int = 20
 
 
 def load_settings() -> Settings:
@@ -41,6 +45,13 @@ def load_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
         max_llm_calls_per_scan=int(os.getenv("MAX_LLM_CALLS_PER_SCAN", "20")),
+        ai_builder_api_key=os.getenv("AI_BUILDER_API_KEY") or None,
+        ai_builder_base_url=os.getenv(
+            "AI_BUILDER_BASE_URL",
+            "https://space.ai-builders.com/backend/v1",
+        ),
+        reviewer_model=os.getenv("REVIEWER_MODEL", "deepseek-v4-pro"),
+        max_reviewer_calls_per_scan=int(os.getenv("MAX_REVIEWER_CALLS_PER_SCAN", "20")),
         min_match_score=float(os.getenv("MIN_MATCH_SCORE", "0.72")),
         actor_profile_path=Path(os.getenv("ACTOR_PROFILE_PATH", "profile.example.json")),
         database_path=Path(os.getenv("DATABASE_PATH", "backstage_agent.sqlite3")),

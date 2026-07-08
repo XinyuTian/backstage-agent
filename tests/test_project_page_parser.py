@@ -9,6 +9,7 @@ def test_parse_project_page_roles_from_expanded_backstage_text():
         project_url="https://example.com/lunar",
         description='Casting "LUNAR 5," an animated series.',
         raw_text='Casting "LUNAR 5," an animated series.',
+        project_labels=["Animation"],
     )
     html = """
 <main>
@@ -45,5 +46,35 @@ def test_parse_project_page_roles_from_expanded_backstage_text():
 
     assert [role.title for role in roles] == ["Lunar 5 - Dan", "Lunar 5 - Clara"]
     assert roles[0].location == "Seeking talent Worldwide"
+    assert roles[0].project_labels == ["Animation"]
     assert "Captain of the LUNAR 5" in roles[0].description
     assert "Rate: $500 flat rate" in roles[1].compensation
+
+
+def test_parse_project_page_roles_adds_backstage_page_labels():
+    project = ProjectNotice(
+        source_message_id="m1",
+        title="Behind The Confessional",
+        project_url="https://example.com/confessional",
+        description='Casting "Behind The Confessional."',
+        raw_text='Casting "Behind The Confessional."',
+    )
+    html = """
+<main>
+<p>FEATURE FILM</p>
+<p>NONUNION</p>
+<p>Posted 1 day ago</p>
+<h1>'Behind The Confessional'</h1>
+<h2>Roles in this project</h2>
+<p>Zella Marchand</p>
+<p>Lead. Female. 18-35</p>
+<p>A conflicted believer facing buried trauma.</p>
+<h2>Dates &amp; Locations</h2>
+<p>Remote.</p>
+</main>
+"""
+
+    roles = parse_project_page_roles(project, html)
+
+    assert roles[0].title == "Behind The Confessional - Zella Marchand"
+    assert roles[0].project_labels == ["FEATURE FILM"]

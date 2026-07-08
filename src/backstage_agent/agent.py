@@ -7,6 +7,7 @@ from .email_client import ImapEmailClient
 from .models import ApplicationDraft, ScreeningDecision
 from .parser import parse_project_notices
 from .project_page_parser import parse_project_page_roles
+from .reviewer import DecisionReviewer
 from .screener import RoleScreener
 from .settings import Settings, load_actor_profile
 from .storage import DecisionStore
@@ -28,6 +29,7 @@ class BackstageAgent:
         self.profile = load_actor_profile(settings.actor_profile_path)
         self.email_client = ImapEmailClient(settings)
         self.screener = RoleScreener(settings, self.profile)
+        self.reviewer = DecisionReviewer(settings, self.profile)
         self.applications = ApplicationService(self.profile, settings.dry_run)
         self.store = DecisionStore(settings.database_path)
         self.project_pages = ProjectPageClient()
@@ -44,22 +46,29 @@ class BackstageAgent:
             projects_seen += len(projects)
             notices = []
             for project in projects:
+                if self.store.project_notice_exists(project):
+                    continue
                 project_id = self.store.record_project(project)
                 html = self.project_pages.fetch_html(project.project_url)
                 page_roles = parse_project_page_roles(project, html or "") if html else []
                 for role in page_roles:
+                    if self.store.role_exists(role.role_key) or self.store.decision_exists(role.role_key):
+                        continue
                     self.store.record_role(project_id, role)
-                notices.extend(page_roles)
+                    notices.append(role)
 
             notices_seen += len(notices)
             for notice in notices:
                 decision = self.screener.screen(notice)
-                self.store.record_decision(decision)
+                decision_id = self.store.record_decision(decision)
                 decisions.append(decision)
                 if decision.should_apply:
-                    draft = self.applications.create_or_submit(decision)
-                    self.store.record_application(draft)
-                    application_drafts.append(draft)
+                    review = self.reviewer.review(notice)
+                    self.store.record_review(decision_id, review)
+                    if review.approved:
+                        draft = self.applications.create_or_submit(decision)
+                        self.store.record_application(draft)
+                        application_drafts.append(draft)
 
         return ScanResult(
             messages_seen=len(messages),

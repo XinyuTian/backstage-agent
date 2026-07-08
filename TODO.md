@@ -18,6 +18,7 @@
 
 ## Screening Quality
 
+- Consider moving the first-pass screener from OpenAI `gpt-4o-mini` to AI Builder `deepseek-v4-flash` for lower cost, while keeping the strict reviewer on `deepseek-v4-pro`.
 - Improve age-range logic with deterministic local checks before the LLM.
 - Improve gender, location, union, compensation, and travel matching with local rules.
 - Keep comfort boundaries explicit: do not infer discomfort unless the profile or notice says so.

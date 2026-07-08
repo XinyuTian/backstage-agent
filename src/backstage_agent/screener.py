@@ -26,7 +26,7 @@ class RoleScreener:
                 notice=notice,
                 score=0.0,
                 should_apply=False,
-                reasons=["Skipped LLM screening because no API key or call budget was available."],
+                reasons=["Rejected because LLM screening was unavailable: no API key or call budget."],
             )
         return self._llm_screen(notice)
 
@@ -43,7 +43,7 @@ class RoleScreener:
             )
 
         hard_reject_reasons = []
-        role_genders = _role_genders(notice.raw_text)
+        role_genders = _role_genders(notice)
         if role_genders and not _gender_matches(role_genders, self.profile.genders):
             hard_reject_reasons.append(
                 f"Rejected locally: role gender requirement ({', '.join(role_genders)}) "
@@ -61,6 +61,12 @@ class RoleScreener:
         identity_reason = _identity_language_mismatch(notice, self.profile)
         if identity_reason:
             hard_reject_reasons.append(identity_reason)
+
+        if _requires_real_singing(notice) and not _profile_can_sing(self.profile):
+            hard_reject_reasons.append(
+                "Rejected locally: role requires real singing/vocal performance, "
+                "but actor profile says can_sing is false."
+            )
 
         if hard_reject_reasons:
             return ScreeningDecision(
@@ -101,7 +107,9 @@ class RoleScreener:
                     "content": (
                         "You screen casting notices for fit. Return compact JSON with "
                         "score between 0 and 1, should_apply boolean, reasons array, "
-                        "and concerns array. Be selective and cost-conscious. "
+                        "and concerns array. This is the optimistic first-pass selector; "
+                        "pass plausible fits so a stricter independent reviewer can make "
+                        "the final call. Still reject concrete conflicts. "
                         "Treat age ranges as compatible when they overlap at all; "
                         "for example actor 25-45 fits role 18-35. Do not reject "
                         "because the ranges are not identical. Only cite a comfort "
@@ -176,8 +184,16 @@ def _format_range(value: tuple[int, int]) -> str:
     return f"{value[0]}+" if value[1] == 120 else f"{value[0]}-{value[1]}"
 
 
-def _role_genders(text: str) -> list[str]:
+def _role_genders(notice: CastingNotice) -> list[str]:
     genders = []
+    scoped_text = _role_scoped_text(notice)
+    lower_scoped = scoped_text.lower()
+    if re.search(r"\b(male lead|male role|male actor|man)\b", lower_scoped):
+        genders.append("male")
+    if re.search(r"\b(female lead|female role|female actor|woman)\b", lower_scoped):
+        genders.append("female")
+
+    text = "\n".join(part for part in (scoped_text, notice.raw_text) if part)
     for line in text.splitlines():
         if not _looks_like_role_line(line):
             continue
@@ -204,6 +220,38 @@ def _gender_matches(role_genders: list[str], profile_genders: list[str]) -> bool
     if "open" in role_genders or "any" in role_genders:
         return True
     return bool(set(role_genders) & normalized_profile)
+
+
+def _requires_real_singing(notice: CastingNotice) -> bool:
+    text = _role_scoped_text(notice).lower()
+    return bool(
+        re.search(
+            r"\b("
+            r"must (?:be )?(?:sing|singing|sing songs|perform songs|have .*vocal)|"
+            r"required to sing|singing required|live singing|"
+            r"vocalist|vocalists|vocal performance|strong vocalist|"
+            r"wide vocal range|ability to harmonize|ability to harmonise|"
+            r"strong abilities to harmonize|strong ability to harmonize"
+            r")",
+            text,
+        )
+    )
+
+
+def _profile_can_sing(profile: ActorProfile) -> bool:
+    return profile.attributes.get("can_sing", "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _role_scoped_text(notice: CastingNotice) -> str:
+    return "\n".join(
+        part
+        for part in (
+            notice.title,
+            notice.role,
+            notice.description,
+        )
+        if part
+    )
 
 
 def _looks_like_role_line(line: str) -> bool:
