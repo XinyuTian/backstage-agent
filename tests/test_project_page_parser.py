@@ -108,3 +108,32 @@ def test_parse_project_page_roles_adds_shooting_dates_and_locations():
 
     assert roles[0].shooting_dates == "Shoots July 11 in Los Angeles, CA"
     assert "Shooting dates: Shoots July 11 in Los Angeles, CA" in roles[0].raw_text
+
+
+def test_parse_project_page_roles_includes_embedded_gender_display():
+    project = ProjectNotice(
+        source_message_id="m1",
+        title="The Last Bugle",
+        project_url="https://example.com/last-bugle",
+        description="WW2 short film.",
+        raw_text="WW2 short film.",
+    )
+    html = """
+<script>
+{"roles": [
+  {
+    "name": "American Soldiers",
+    "url": "https://example.com/american-soldiers",
+    "role_type_display": "Lead",
+    "gender_display": "Male",
+    "age_range_display": "18-50",
+    "description": "American GI's with short hair."
+  }
+]}
+</script>
+"""
+
+    roles = parse_project_page_roles(project, html)
+
+    assert roles[0].description.startswith("Lead, Male, 18-50")
+    assert "Lead, Male, 18-50" in roles[0].raw_text

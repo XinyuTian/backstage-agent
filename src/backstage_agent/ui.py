@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .project_labels import extract_backstage_project_labels
+from .project_screener import PROJECT_GATE_ROLE
 from .settings import load_settings
 from .storage import DecisionStore
 
@@ -249,7 +250,9 @@ def _list(items: list[str]) -> str:
 def _reviewer_detail(row) -> str:
     status = row["reviewer_status"]
     if not row["should_apply"]:
-        return '<p class="muted">Not reviewed because the first pass rejected it.</p>'
+        if _is_project_decision(row):
+            return '<p class="muted">Not reviewed because project screening rejected it.</p>'
+        return '<p class="muted">Not reviewed because role screening rejected it.</p>'
     if not status:
         return '<p class="muted">No reviewer result recorded yet.</p>'
     reasons = _json_list(row["reviewer_reasons_json"])
@@ -305,17 +308,42 @@ def _project_label_chips(labels: list[str], class_name: str = "label-strip") -> 
 
 
 def _decision_status(row) -> tuple[str, str]:
+    is_project = _is_project_decision(row)
     if row["should_apply"] and row["application_status"] == "submitted_backstage":
         return "Submitted", "applied"
+    if is_project and row["should_apply"] and row["reviewer_status"] == "approved":
+        return "Project Approved", "passed"
     if row["should_apply"] and row["reviewer_status"] == "approved":
         return "Approved", "passed"
+    if is_project and row["should_apply"]:
+        return "Project Needs Check", "hold"
     if row["should_apply"]:
         return "Needs Check", "hold"
+    if is_project:
+        return "Project Rejected", "reject"
     return "Rejected", "reject"
 
 
+def _is_project_decision(row) -> bool:
+    try:
+        notice = json.loads(row["notice_json"])
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return notice.get("role") == PROJECT_GATE_ROLE
+
+
 def _screening_label(row) -> str:
-    return "LLM screening" if row["llm_used"] else "Local rule screening"
+    is_project = _is_project_decision(row)
+    if row["llm_used"]:
+        return "Project LLM screening" if is_project else "Role LLM screening"
+    reasons = " ".join(_json_list(row["reasons_json"])).lower()
+    if "llm screening was unavailable" in reasons:
+        return "Project LLM unavailable" if is_project else "Role LLM unavailable"
+    if row["should_apply"]:
+        return "Legacy local match"
+    if is_project:
+        return "Project local rejection"
+    return "Role local rejection"
 
 
 def _application_label(row) -> str:

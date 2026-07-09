@@ -1,5 +1,5 @@
 from backstage_agent.agent import BackstageAgent
-from backstage_agent.models import ReviewDecision, ScreeningDecision
+from backstage_agent.models import ProjectNotice, ReviewDecision, ScreeningDecision
 from types import SimpleNamespace
 
 
@@ -68,6 +68,14 @@ class FakeReviewer:
     def __init__(self, status):
         self.status = status
 
+    def review_project(self, notice):
+        return ReviewDecision(
+            notice=notice,
+            status="approved",
+            score=0.9,
+            reasons=["project review"],
+        )
+
     def review(self, notice):
         return ReviewDecision(
             notice=notice,
@@ -81,6 +89,7 @@ def _agent_with(notice, should_apply=True, reviewer_status="approved"):
     agent = object.__new__(BackstageAgent)
     agent.email_client = FakeEmailClient(messages=[object()])
     agent.store = FakeStore()
+    agent.project_screener = FakeScreener(should_apply=True)
     agent.screener = FakeScreener(should_apply=should_apply)
     agent.reviewer = FakeReviewer(status=reviewer_status)
     agent.applications = FakeApplications()
@@ -96,14 +105,24 @@ def test_scan_applies_only_after_reviewer_approval(monkeypatch):
         shooting_locations="Los Angeles",
         shooting_dates="July 2026",
     )
+    project = ProjectNotice(
+        source_message_id="m1",
+        title="Project",
+        project_url="https://example.com",
+        description="Project",
+        raw_text="Project",
+        project_key="project-key",
+    )
     backstage_agent = _agent_with(notice, should_apply=True, reviewer_status="approved")
-    monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [SimpleNamespace(project_url="https://example.com")])
+    monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [project])
     monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
     backstage_agent.project_pages.fetch_html = lambda url: "<html></html>"
 
     result = backstage_agent.scan(limit=1, days=1)
 
-    assert len(backstage_agent.store.reviews) == 1
+    assert len(backstage_agent.store.reviews) == 2
+    assert len(result.project_reviews) == 1
+    assert len(result.reviews) == 1
     assert len(backstage_agent.store.applications) == 1
     assert len(result.applications) == 1
 
@@ -116,13 +135,23 @@ def test_scan_holds_conflict_without_application(monkeypatch):
         shooting_locations="Los Angeles",
         shooting_dates="July 2026",
     )
+    project = ProjectNotice(
+        source_message_id="m1",
+        title="Project",
+        project_url="https://example.com",
+        description="Project",
+        raw_text="Project",
+        project_key="project-key",
+    )
     backstage_agent = _agent_with(notice, should_apply=True, reviewer_status="rejected")
-    monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [SimpleNamespace(project_url="https://example.com")])
+    monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [project])
     monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
     backstage_agent.project_pages.fetch_html = lambda url: "<html></html>"
 
     result = backstage_agent.scan(limit=1, days=1)
 
-    assert len(backstage_agent.store.reviews) == 1
+    assert len(backstage_agent.store.reviews) == 2
+    assert len(result.project_reviews) == 1
+    assert len(result.reviews) == 1
     assert len(backstage_agent.store.applications) == 0
     assert len(result.applications) == 0

@@ -173,8 +173,9 @@ def _parse_embedded_roles(project: ProjectNotice, html: str) -> list[CastingNoti
             project.project_date,
         )
         role_type = role.get("role_type_display") or _role_type(role.get("role_type"))
+        gender = _gender_display(role)
         age_range = role.get("age_range_display") or _age_display(role)
-        role_summary = ", ".join(part for part in [role_type, age_range] if part)
+        role_summary = ", ".join(part for part in [role_type, gender, age_range] if part)
         description = role.get("description") or ""
         compensation = "\n".join(
             part
@@ -433,6 +434,39 @@ def _age_display(role: dict) -> str | None:
     if minimum:
         return f"{minimum}+"
     return None
+
+
+def _gender_display(role: dict) -> str | None:
+    values = _flatten_json_text(
+        [
+            role.get("gender_display"),
+            role.get("gender"),
+            role.get("genders"),
+            role.get("gender_identities"),
+        ]
+    )
+    genders = []
+    for value in values:
+        for part in re.split(r"[,/|;]+", value):
+            text = part.strip()
+            if not text:
+                continue
+            lower = text.lower()
+            if lower in {"m", "male", "men", "man"}:
+                genders.append("Male")
+            elif lower in {"f", "female", "women", "woman"}:
+                genders.append("Female")
+            elif lower in {"non-binary", "nonbinary", "non binary"}:
+                genders.append("Non-Binary")
+            elif lower in {"gender-nonconforming", "gender nonconforming"}:
+                genders.append("Gender-Nonconforming")
+            elif lower in {"any", "all", "open"}:
+                genders.append("Open")
+            elif "male" in lower and "female" not in lower:
+                genders.append("Male")
+            elif "female" in lower:
+                genders.append("Female")
+    return ", ".join(dict.fromkeys(genders)) or None
 
 
 def _role_section(lines: list[str]) -> list[str]:

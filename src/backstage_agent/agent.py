@@ -5,9 +5,10 @@ from datetime import date
 
 from .application import ApplicationService
 from .email_client import ImapEmailClient
-from .models import ApplicationDraft, ScreeningDecision
+from .models import ApplicationDraft, ReviewDecision, ScreeningDecision
 from .parser import parse_project_notices
 from .project_page_parser import parse_project_page_roles
+from .project_screener import ProjectScreener, with_project_shooting_info
 from .reviewer import DecisionReviewer
 from .screener import RoleScreener
 from .settings import Settings, load_actor_profile
@@ -20,7 +21,10 @@ class ScanResult:
     messages_seen: int
     projects_seen: int
     notices_seen: int
+    project_decisions: list[ScreeningDecision]
+    project_reviews: list[ReviewDecision]
     decisions: list[ScreeningDecision]
+    reviews: list[ReviewDecision]
     applications: list[ApplicationDraft]
 
 
@@ -29,6 +33,7 @@ class BackstageAgent:
         self.settings = settings
         self.profile = load_actor_profile(settings.actor_profile_path)
         self.email_client = ImapEmailClient(settings)
+        self.project_screener = ProjectScreener(settings, self.profile)
         self.screener = RoleScreener(settings, self.profile)
         self.reviewer = DecisionReviewer(settings, self.profile)
         self.applications = ApplicationService(settings, self.profile)
@@ -41,7 +46,10 @@ class BackstageAgent:
             days=days,
             target_date=target_date,
         )
+        project_decisions: list[ScreeningDecision] = []
+        project_reviews: list[ReviewDecision] = []
         decisions: list[ScreeningDecision] = []
+        reviews: list[ReviewDecision] = []
         application_drafts: list[ApplicationDraft] = []
         projects_seen = 0
         notices_seen = 0
@@ -62,6 +70,21 @@ class BackstageAgent:
                         page_roles[0].shooting_locations,
                         page_roles[0].shooting_dates,
                     )
+                    project = with_project_shooting_info(
+                        project,
+                        page_roles[0].shooting_locations,
+                        page_roles[0].shooting_dates,
+                    )
+                project_decision = self.project_screener.screen(project)
+                project_decision_id = self.store.record_decision(project_decision)
+                project_decisions.append(project_decision)
+                if not project_decision.should_apply:
+                    continue
+                project_review = self.reviewer.review_project(project_decision.notice)
+                self.store.record_review(project_decision_id, project_review)
+                project_reviews.append(project_review)
+                if not project_review.approved:
+                    continue
                 for role in page_roles:
                     if self.store.role_exists(role.role_key) or self.store.decision_exists(role.role_key):
                         continue
@@ -76,6 +99,7 @@ class BackstageAgent:
                 if decision.should_apply:
                     review = self.reviewer.review(notice)
                     self.store.record_review(decision_id, review)
+                    reviews.append(review)
                     if review.approved:
                         try:
                             draft = self.applications.create_or_submit(decision)
@@ -91,6 +115,9 @@ class BackstageAgent:
             messages_seen=len(messages),
             projects_seen=projects_seen,
             notices_seen=notices_seen,
+            project_decisions=project_decisions,
+            project_reviews=project_reviews,
             decisions=decisions,
+            reviews=reviews,
             applications=application_drafts,
         )

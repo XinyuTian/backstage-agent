@@ -1,0 +1,126 @@
+from backstage_agent.models import CastingNotice, ProjectNotice, ReviewDecision, ScreeningDecision
+from backstage_agent.project_screener import project_to_notice
+from backstage_agent.storage import DecisionStore
+
+
+def _notice(title: str) -> CastingNotice:
+    return CastingNotice(
+        source_message_id="m1",
+        title=title,
+        project="Project",
+        role=title,
+        location=None,
+        compensation=None,
+        description=title,
+        application_url=None,
+        raw_text=title,
+        role_key=title.lower().replace(" ", "-"),
+    )
+
+
+def test_reviewer_rejected_counts_as_needs_check_not_rejected(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    screened_out = ScreeningDecision(
+        notice=_notice("Screened Out"),
+        score=0.0,
+        should_apply=False,
+        reasons=["Rejected locally."],
+    )
+    needs_check = ScreeningDecision(
+        notice=_notice("Reviewer Rejected"),
+        score=0.85,
+        should_apply=True,
+        reasons=["Passed first-pass screening."],
+        llm_used=True,
+    )
+
+    store.record_decision(screened_out)
+    decision_id = store.record_decision(needs_check)
+    store.record_review(
+        decision_id,
+        ReviewDecision(
+            notice=needs_check.notice,
+            status="rejected",
+            score=0.2,
+            reasons=["Reviewer found a conflict."],
+        ),
+    )
+
+    counts = store.decision_counts()
+    rejected = store.search_decisions(decision="reject")
+    needs_check_rows = store.search_decisions(decision="needs_check")
+
+    assert counts["reject_count"] == 1
+    assert counts["needs_check_count"] == 1
+    assert [row["title"] for row in rejected] == ["Screened Out"]
+    assert [row["title"] for row in needs_check_rows] == ["Reviewer Rejected"]
+
+
+def test_approved_project_gate_is_hidden_but_unresolved_project_gates_show(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    approved_gate = ScreeningDecision(
+        notice=project_to_notice(_project("Approved Project")),
+        score=0.9,
+        should_apply=True,
+        reasons=["Passed project screening."],
+        llm_used=True,
+    )
+    rejected_gate = ScreeningDecision(
+        notice=project_to_notice(_project("Rejected Project")),
+        score=0.0,
+        should_apply=False,
+        reasons=["Rejected by project screening."],
+        llm_used=True,
+    )
+    needs_check_gate = ScreeningDecision(
+        notice=project_to_notice(_project("Needs Check Project")),
+        score=0.8,
+        should_apply=True,
+        reasons=["Passed project screening."],
+        llm_used=True,
+    )
+
+    approved_id = store.record_decision(approved_gate)
+    store.record_review(
+        approved_id,
+        ReviewDecision(
+            notice=approved_gate.notice,
+            status="approved",
+            score=0.9,
+            reasons=["Project approved."],
+        ),
+    )
+    store.record_decision(rejected_gate)
+    needs_check_id = store.record_decision(needs_check_gate)
+    store.record_review(
+        needs_check_id,
+        ReviewDecision(
+            notice=needs_check_gate.notice,
+            status="rejected",
+            score=0.2,
+            reasons=["Project reviewer found a conflict."],
+        ),
+    )
+
+    rows = store.search_decisions()
+    counts = store.decision_counts()
+
+    assert [row["title"] for row in rows] == [
+        "Needs Check Project - Project Gate",
+        "Rejected Project - Project Gate",
+    ]
+    assert counts["total"] == 2
+    assert counts["passed_count"] == 0
+    assert counts["needs_check_count"] == 1
+    assert counts["reject_count"] == 1
+
+
+def _project(title: str) -> ProjectNotice:
+    return ProjectNotice(
+        source_message_id="m1",
+        title=title,
+        project_url=None,
+        description=title,
+        raw_text=title,
+        project_key=title.lower().replace(" ", "-"),
+    )

@@ -8,6 +8,7 @@ from pathlib import Path
 from .identifiers import project_key as build_project_key
 from .identifiers import role_key as build_role_key
 from .models import ApplicationDraft, CastingNotice, ProjectNotice, ReviewDecision, ScreeningDecision
+from .project_screener import PROJECT_GATE_ROLE
 
 
 class DecisionStore:
@@ -611,8 +612,16 @@ def _decision_filter_sql(
     date_from: str = "",
     date_to: str = "",
 ) -> tuple[str, list[object]]:
-    clauses = []
-    params: list[object] = []
+    clauses = [
+        """
+        NOT (
+          d.should_apply = 1
+          AND d.reviewer_status = 'approved'
+          AND d.notice_json LIKE ?
+        )
+        """
+    ]
+    params: list[object] = [f'%"role": "{PROJECT_GATE_ROLE}"%']
     if query:
         clauses.append("(d.title LIKE ? OR d.notice_json LIKE ? OR d.reasons_json LIKE ?)")
         pattern = f"%{query}%"

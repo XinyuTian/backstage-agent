@@ -26,7 +26,7 @@ def test_local_screener_rejects_avoid_terms(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -76,7 +76,7 @@ def test_local_screener_does_not_reject_unpaid_roles_when_profile_allows_them(tm
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -95,10 +95,9 @@ def test_local_screener_does_not_reject_unpaid_roles_when_profile_allows_them(tm
         raw_text="Short Film\nSierra\nSupporting, Female, 20-25\nImprov-friendly role.\nUnpaid",
     )
 
-    decision = RoleScreener(settings, profile).screen(notice)
+    decision = RoleScreener(settings, profile)._local_screen(notice)
 
-    assert decision.should_apply is True
-    assert "unpaid" not in " ".join(decision.concerns).lower()
+    assert decision is None
 
 
 def test_local_screener_rejects_gender_mismatch_before_llm(tmp_path):
@@ -124,7 +123,7 @@ def test_local_screener_rejects_gender_mismatch_before_llm(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key="unused",
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -173,7 +172,7 @@ def test_local_screener_rejects_male_lead_role_name_before_llm(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key="unused",
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -222,7 +221,7 @@ def test_local_screener_rejects_male_pronoun_role_before_llm(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key="unused",
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -239,6 +238,55 @@ def test_local_screener_rejects_male_pronoun_role_before_llm(tmp_path):
         description="Supporting, 18-50. A noble warrior carrying the emotional burden of his past.",
         application_url=None,
         raw_text="Shamgar\nSupporting, 18-50\nA noble warrior carrying the emotional burden of his past.",
+    )
+
+    decision = RoleScreener(settings, profile).screen(notice)
+
+    assert decision.should_apply is False
+    assert decision.llm_used is False
+    assert "gender requirement" in decision.reasons[0]
+
+
+def test_local_screener_rejects_male_staged_reading_role_name_before_llm(tmp_path):
+    profile = ActorProfile(
+        name="Actor",
+        location="Los Angeles",
+        age_range="25-45",
+        genders=["female"],
+        ethnicities=["open"],
+        union_status="non-union",
+        skills=[],
+        avoid=[],
+        preferred_roles=[],
+        max_travel_miles=35,
+        cover_note_template="Hello",
+    )
+    settings = Settings(
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user",
+        imap_password="pass",
+        imap_folder="INBOX",
+        email_search_query="ALL",
+        email_subject_keywords=[],
+        openai_api_key="unused",
+        llm_model="deepseek-v4-pro",
+        max_llm_calls_per_scan=1,
+        min_match_score=0.72,
+        actor_profile_path=tmp_path / "profile.json",
+        database_path=tmp_path / "db.sqlite3",
+        dry_run=True,
+    )
+    notice = CastingNotice(
+        source_message_id="m1",
+        title="Virtual Staged Reading Event - Actor 1",
+        project="Virtual Staged Reading Event",
+        role="Actor 1",
+        location="Remote",
+        compensation=None,
+        description='Lead, 18-85. To read the roles of Lee, Stan and Pastor.',
+        application_url=None,
+        raw_text='Actor 1\nLead, 18-85\nTo read the roles of Lee, Stan and Pastor.',
     )
 
     decision = RoleScreener(settings, profile).screen(notice)
@@ -271,7 +319,7 @@ def test_local_screener_rejects_male_villain_pronoun_role_before_llm(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key="unused",
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -321,7 +369,7 @@ def test_local_screener_rejects_required_real_singing_before_llm(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key="unused",
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -371,7 +419,7 @@ def test_local_screener_ignores_singing_noise_from_other_email_roles(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -423,7 +471,7 @@ def test_local_screener_allows_singer_character_without_singing_requirement(tmp_
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -474,7 +522,7 @@ def test_local_screener_keeps_overlapping_age_for_llm(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -525,7 +573,7 @@ def test_local_screener_rejects_nonmatching_identity_language_signals(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key="unused",
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -551,6 +599,55 @@ def test_local_screener_rejects_nonmatching_identity_language_signals(tmp_path):
     assert "identity or language signals" in decision.reasons[0]
 
 
+def test_local_screener_rejects_nonmatching_appearance_ethnicity_signal(tmp_path):
+    profile = ActorProfile(
+        name="Actor",
+        location="Los Angeles",
+        age_range="25-45",
+        genders=["female"],
+        ethnicities=["Asian"],
+        union_status="non-union",
+        skills=["Mandarin Chinese", "English"],
+        avoid=[],
+        preferred_roles=[],
+        max_travel_miles=35,
+        cover_note_template="Hello",
+    )
+    settings = Settings(
+        imap_host="imap.example.com",
+        imap_port=993,
+        imap_username="user",
+        imap_password="pass",
+        imap_folder="INBOX",
+        email_search_query="ALL",
+        email_subject_keywords=[],
+        openai_api_key="unused",
+        llm_model="deepseek-v4-pro",
+        max_llm_calls_per_scan=1,
+        min_match_score=0.72,
+        actor_profile_path=tmp_path / "profile.json",
+        database_path=tmp_path / "db.sqlite3",
+        dry_run=True,
+    )
+    notice = CastingNotice(
+        source_message_id="m1",
+        title="The Last Bugle - Allied Nurses",
+        project="The Last Bugle",
+        role="Allied Nurses",
+        location="San Francisco",
+        compensation=None,
+        description="Lead, 18-45. Appearance: Look like Angels of Mercy.",
+        application_url=None,
+        raw_text="Allied Nurses\nLead, 18-45\nAppearance: Look like Angels of Mercy.",
+    )
+
+    decision = RoleScreener(settings, profile).screen(notice)
+
+    assert decision.should_apply is False
+    assert decision.llm_used is False
+    assert "White/Caucasian" in decision.reasons[0]
+
+
 def test_local_screener_allows_matching_identity_language_signals(tmp_path):
     profile = ActorProfile(
         name="Actor",
@@ -574,7 +671,7 @@ def test_local_screener_allows_matching_identity_language_signals(tmp_path):
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",
@@ -624,7 +721,7 @@ def test_local_screener_does_not_reject_open_role_for_project_title_only(tmp_pat
         email_search_query="ALL",
         email_subject_keywords=[],
         openai_api_key=None,
-        llm_model="gpt-4o-mini",
+        llm_model="deepseek-v4-pro",
         max_llm_calls_per_scan=1,
         min_match_score=0.72,
         actor_profile_path=tmp_path / "profile.json",

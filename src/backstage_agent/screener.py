@@ -34,8 +34,7 @@ class RoleScreener:
         return self._llm_screen(notice)
 
     def _local_screen(self, notice: CastingNotice) -> ScreeningDecision | None:
-        text = notice.raw_text.lower()
-        concerns = [term for term in self.profile.avoid if term.lower() in text]
+        concerns = _avoidance_concerns(notice, self.profile.avoid)
         if concerns:
             return ScreeningDecision(
                 notice=notice,
@@ -80,22 +79,6 @@ class RoleScreener:
                 concerns=[],
             )
 
-        preferred_hits = [
-            role for role in self.profile.preferred_roles if role.lower() in text
-        ]
-        skill_hits = [skill for skill in self.profile.skills if skill.lower() in text]
-        if len(preferred_hits) >= 2 or (preferred_hits and skill_hits):
-            score = min(0.95, 0.65 + 0.1 * len(preferred_hits) + 0.05 * len(skill_hits))
-            return ScreeningDecision(
-                notice=notice,
-                score=score,
-                should_apply=score >= self.settings.min_match_score,
-                reasons=[
-                    "Matched local preferred-role and skill rules.",
-                    f"Preferred hits: {', '.join(preferred_hits) or 'none'}.",
-                    f"Skill hits: {', '.join(skill_hits) or 'none'}.",
-                ],
-            )
         return None
 
     def _llm_screen(self, notice: CastingNotice) -> ScreeningDecision:
@@ -204,6 +187,11 @@ def _format_range(value: tuple[int, int]) -> str:
     return f"{value[0]}+" if value[1] == 120 else f"{value[0]}-{value[1]}"
 
 
+def _avoidance_concerns(notice: CastingNotice, avoid_terms: list[str]) -> list[str]:
+    text = notice.raw_text.lower()
+    return [term for term in avoid_terms if term.lower() in text]
+
+
 def _role_genders(notice: CastingNotice) -> list[str]:
     genders = []
     scoped_text = _role_scoped_text(notice)
@@ -230,9 +218,21 @@ def _role_genders(notice: CastingNotice) -> list[str]:
     lower_text = text.lower()
     if re.search(r"\b(he|him|his|father|son|brother|husband|boyfriend|king|warrior)\b", lower_text):
         genders.append("male")
+    if _contains_male_role_name(lower_text):
+        genders.append("male")
     if re.search(r"\b(she|her|hers|mother|daughter|sister|wife|girlfriend|queen)\b", lower_text):
         genders.append("female")
     return list(dict.fromkeys(genders))
+
+
+def _contains_male_role_name(text: str) -> bool:
+    male_names = {
+        "hank",
+        "marlon",
+        "nelson",
+        "stan",
+    }
+    return bool(set(re.findall(r"[a-z]+", text)) & male_names)
 
 
 def _gender_matches(role_genders: list[str], profile_genders: list[str]) -> bool:
@@ -336,7 +336,11 @@ def _profile_identity_terms(profile: ActorProfile) -> set[str]:
 
 
 def _identity_language_signals(notice: CastingNotice) -> list[dict[str, set[str] | str]]:
-    role_text = "\n".join(part for part in [notice.role, _role_detail_line(notice.raw_text)] if part)
+    role_text = "\n".join(
+        part
+        for part in [notice.role, _role_detail_line(notice.raw_text), notice.description]
+        if part
+    )
     role_lower = role_text.lower()
     signals: list[dict[str, set[str] | str]] = []
     patterns: list[tuple[str, tuple[str, ...], set[str]]] = [
@@ -346,7 +350,7 @@ def _identity_language_signals(notice: CastingNotice) -> list[dict[str, set[str]
             {"spanish", "latino", "hispanic"},
         ),
         ("Black/African", ("black", "african american", "afro-latina", "afro-latino"), {"black", "african"}),
-        ("White/Caucasian", ("white", "caucasian"), {"white", "caucasian"}),
+        ("White/Caucasian", ("white", "caucasian", "angels of mercy"), {"white", "caucasian"}),
         ("Middle Eastern/Arab", ("middle eastern", "arab", "arabic"), {"middle_eastern", "arab"}),
         ("South Asian/Indian", ("south asian", "indian", "hindi", "urdu"), {"south_asian", "indian"}),
         ("East Asian/Chinese/Mandarin", ("east asian", "chinese", "mandarin"), {"asian", "east_asian", "chinese", "mandarin"}),

@@ -17,6 +17,12 @@ class DecisionReviewer:
         self._client = _reviewer_client(settings)
 
     def review(self, notice: CastingNotice) -> ReviewDecision:
+        return self._review_with_prompt(notice, _ROLE_REVIEWER_PROMPT)
+
+    def review_project(self, notice: CastingNotice) -> ReviewDecision:
+        return self._review_with_prompt(notice, _PROJECT_REVIEWER_PROMPT)
+
+    def _review_with_prompt(self, notice: CastingNotice, system_prompt: str) -> ReviewDecision:
         if self._client is None:
             return ReviewDecision(
                 notice=notice,
@@ -33,9 +39,9 @@ class DecisionReviewer:
                 reasons=["Reviewer unavailable: reviewer call budget was exhausted."],
                 model=self.settings.reviewer_model,
             )
-        return self._llm_review(notice)
+        return self._llm_review(notice, system_prompt)
 
-    def _llm_review(self, notice: CastingNotice) -> ReviewDecision:
+    def _llm_review(self, notice: CastingNotice, system_prompt: str) -> ReviewDecision:
         self._calls += 1
         try:
             token_limit_param = (
@@ -51,27 +57,7 @@ class DecisionReviewer:
                 messages=[
                     {
                         "role": "system",
-                        "content": (
-                            "You are the strict second-pass reviewer for casting applications. "
-                            "You must make an independent decision using only the actor profile "
-                            "and casting notice. You are not given, and must not infer, the first "
-                            "model's reasoning. Return compact JSON with fields: status, score, "
-                            "reasons, concerns. status must be one of approved, rejected, hold. "
-                            "Approve only when the actor is a clear fit. Reject when the role has "
-                            "a concrete conflict with the actor profile, especially real singing "
-                            "requirements when can_sing is false, voiceover/native English needs, "
-                            "or ethnicity/race/language/cultural signals that do not match. Hold "
-                            "when the application requires unanswered questions or unlisted skills, "
-                            "availability, wardrobe, comfort level, or special abilities. Do not "
-                            "reject solely because gender is ambiguous; ambiguity may mean there is "
-                            "no gender constraint. Treat age ranges as compatible when they overlap "
-                            "at even one age; actor age range 25-40 overlaps role age range 20-25 "
-                            "because both include 25, so that is not an age conflict. "
-                            "Do not reject horror by itself when comfortable_with_horror is true. "
-                            "Do not reject unpaid roles or list unpaid compensation as a concern "
-                            "when comfortable_with_unpaid_roles is true. Treat unreimbursed travel "
-                            "expenses as different from an unpaid role."
-                        ),
+                        "content": system_prompt,
                     },
                     {
                         "role": "user",
@@ -136,3 +122,45 @@ def _reviewer_client(settings: Settings) -> OpenAI | None:
             base_url=settings.ai_builder_base_url,
         )
     raise ValueError(f"Unsupported REVIEWER_PROVIDER: {settings.reviewer_provider}")
+
+
+_ROLE_REVIEWER_PROMPT = (
+    "You are the strict second-pass reviewer for casting applications. "
+    "You must make an independent decision using only the actor profile "
+    "and casting notice. You are not given, and must not infer, the first "
+    "model's reasoning. Return compact JSON with fields: status, score, "
+    "reasons, concerns. status must be one of approved, rejected, hold. "
+    "Approve only when the actor is a clear fit. Reject when the role has "
+    "a concrete conflict with the actor profile, especially explicit gender "
+    "requirements that do not match, real singing requirements when "
+    "can_sing is false, native English needs, or "
+    "ethnicity/race/language/cultural signals that do not match. Hold "
+    "when the application requires unanswered questions or unlisted skills, "
+    "availability, wardrobe, comfort level, or special abilities. Do not "
+    "reject solely because gender is ambiguous; ambiguity may mean there is "
+    "no gender constraint. Treat age ranges as compatible when they overlap "
+    "at even one age; actor age range 25-40 overlaps role age range 20-25 "
+    "because both include 25, so that is not an age conflict. "
+    "Do not reject horror by itself when comfortable_with_horror is true. "
+    "Do not reject unpaid roles or list unpaid compensation as a concern "
+    "when comfortable_with_unpaid_roles is true. Treat unreimbursed travel "
+    "expenses as different from an unpaid role."
+)
+
+_PROJECT_REVIEWER_PROMPT = (
+    "You are the strict second-pass reviewer for casting projects. "
+    "You must make an independent decision using only the actor profile and "
+    "project notice. You are deciding whether this whole project should proceed "
+    "to role-level filtering. Return compact JSON with fields: status, score, "
+    "reasons, concerns. status must be one of approved, rejected, hold. Approve "
+    "only when the project is a clear project-level fit. Reject concrete "
+    "project-wide conflicts, especially adult or explicit content, unreimbursed "
+    "travel expenses, impossible location or date requirements, project-wide "
+    "native English requirements, or a poor travel/pay tradeoff. Hold when "
+    "location, dates, pay, travel, safety, or application logistics are unclear. "
+    "Do not reject for role-specific gender, age, ethnicity, language, singing, "
+    "wardrobe, or special-skill requirements unless the notice says they apply "
+    "to the entire project. Do not reject unpaid projects by itself when "
+    "comfortable_with_unpaid_roles is true; consider unpaid plus distant travel "
+    "as a possible conflict."
+)

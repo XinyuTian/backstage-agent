@@ -79,7 +79,10 @@ def _scan(
                 "messages_seen": result.messages_seen,
                 "projects_seen": result.projects_seen,
                 "notices_seen": result.notices_seen,
+                "project_decisions": len(result.project_decisions),
+                "project_reviews": len(result.project_reviews),
                 "decisions": len(result.decisions),
+                "reviews": len(result.reviews),
                 "applications": len(result.applications),
                 "days": days,
                 "date": target_date.isoformat() if target_date else None,
@@ -94,6 +97,10 @@ def _scan(
 
 
 def _scan_summary(result) -> str:
+    project_rejected = sum(1 for decision in result.project_decisions if not decision.should_apply)
+    project_passed_screening = len(result.project_decisions) - project_rejected
+    project_approved = sum(1 for review in result.project_reviews if review.approved)
+    project_needs_check = max(0, project_passed_screening - project_approved)
     rejected = sum(1 for decision in result.decisions if not decision.should_apply)
     first_passed = len(result.decisions) - rejected
     approved = len(result.applications)
@@ -104,11 +111,42 @@ def _scan_summary(result) -> str:
         for app in result.applications
         if app.status not in {"drafted", "submitted_backstage"}
     )
-    return (
+    summary = (
+        f"{len(result.project_decisions)} projects checked, "
+        f"{project_approved} project approved, {project_needs_check} project need check, "
+        f"{project_rejected} project rejected. "
         f"{result.notices_seen} roles checked, {approved} approved, "
         f"{submitted} submitted, {blocked} application blockers, "
         f"{needs_check} need check, {rejected} rejected."
     )
+    budget_warnings = _budget_warnings(result)
+    return f"{summary} {budget_warnings}" if budget_warnings else summary
+
+
+def _budget_warnings(result) -> str:
+    project_screening_exhausted = sum(
+        1
+        for decision in result.project_decisions
+        if any("project llm screening was unavailable" in reason.lower() for reason in decision.reasons)
+    )
+    first_pass_exhausted = sum(
+        1
+        for decision in result.decisions
+        if any("first-pass llm screening was unavailable" in reason.lower() for reason in decision.reasons)
+    )
+    reviewer_exhausted = sum(
+        1
+        for review in [*result.project_reviews, *result.reviews]
+        if any("reviewer call budget was exhausted" in reason.lower() for reason in review.reasons)
+    )
+    warnings = []
+    if project_screening_exhausted:
+        warnings.append(f"{project_screening_exhausted} project-screening budget exhausted")
+    if first_pass_exhausted:
+        warnings.append(f"{first_pass_exhausted} role-screening budget exhausted")
+    if reviewer_exhausted:
+        warnings.append(f"{reviewer_exhausted} reviewer budget exhausted")
+    return "Budget warning: " + ", ".join(warnings) + "." if warnings else ""
 
 
 def _parse_sample(path: Path) -> None:
