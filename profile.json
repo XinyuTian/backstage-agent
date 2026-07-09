@@ -47,7 +47,7 @@
     "performing arts"
   ],
   "max_travel_miles": 60,
-  "cover_note_template": "Hi, I'd love to be considered for {role}. I'm a bilingual performer based in the Bay Area with improv, comedy, and acting training. Thank you for your time.",
+  "cover_note_template": "LLM cover letter drafting is required; use cover_letter_style instead of this legacy template field.",
   "bio": "Based in the San Francisco Bay Area, Xinyu Tian is a bilingual performing artist specializing in live, unscripted comedy. She performs monthly with Lairen Improv in Mandarin and has a background spanning playback theatre, Improv Roulette shows with Now Theater, and Made Up Theatre showcases. She has trained in traditional acting technique at Ohlone College and De Anza College, with additional improv training at BATS Improv and Made Up Theater.",
   "credits": [
     "Made Up Theater Showcase - host and actor - Bay Area - 2025",
@@ -79,6 +79,7 @@
     "can_self_record": "false",
     "profile_location": "San Francisco Bay Area",
     "english_native_speaker": "false",
-    "application_question_policy": "Ask before answering questions about unlisted abilities, availability, wardrobe, comfort level, or special skills."
+    "application_question_policy": "If the profile or role data clearly answers an application question, answer it directly. If the answer is unknown or would require guessing about unlisted abilities, availability, wardrobe, comfort level, special skills, or logistics, pause and ask. When the user provides an answer, log it in the profile for future applications.",
+    "cover_letter_style": "Use polite, warm, short, direct plain text. Default to 'Dear Casting Team,' unless a specific recipient is named. Avoid hype, exaggeration, and unsupported claims. Mention only facts from the role notice and actor profile. Keep the tone professional but human."
   }
 }

@@ -31,7 +31,7 @@ class BackstageAgent:
         self.email_client = ImapEmailClient(settings)
         self.screener = RoleScreener(settings, self.profile)
         self.reviewer = DecisionReviewer(settings, self.profile)
-        self.applications = ApplicationService(self.profile, settings.dry_run)
+        self.applications = ApplicationService(settings, self.profile)
         self.store = DecisionStore(settings.database_path)
         self.project_pages = ProjectPageClient(settings)
 

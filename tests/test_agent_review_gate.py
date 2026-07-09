@@ -7,7 +7,7 @@ class FakeEmailClient:
     def __init__(self, messages):
         self.messages = messages
 
-    def fetch_messages(self, limit, days):
+    def fetch_messages(self, limit, days, target_date=None):
         return self.messages
 
 
@@ -19,6 +19,9 @@ class FakeStore:
 
     def record_project(self, project):
         return 1
+
+    def update_project_info(self, project_id, shooting_locations, shooting_dates):
+        return None
 
     def project_notice_exists(self, project):
         return False
@@ -88,7 +91,11 @@ def _agent_with(notice, should_apply=True, reviewer_status="approved"):
 def test_scan_applies_only_after_reviewer_approval(monkeypatch):
     from backstage_agent import agent as agent_module
 
-    notice = SimpleNamespace(role_key="role-approved")
+    notice = SimpleNamespace(
+        role_key="role-approved",
+        shooting_locations="Los Angeles",
+        shooting_dates="July 2026",
+    )
     backstage_agent = _agent_with(notice, should_apply=True, reviewer_status="approved")
     monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [SimpleNamespace(project_url="https://example.com")])
     monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
@@ -104,7 +111,11 @@ def test_scan_applies_only_after_reviewer_approval(monkeypatch):
 def test_scan_holds_conflict_without_application(monkeypatch):
     from backstage_agent import agent as agent_module
 
-    notice = SimpleNamespace(role_key="role-held")
+    notice = SimpleNamespace(
+        role_key="role-held",
+        shooting_locations="Los Angeles",
+        shooting_dates="July 2026",
+    )
     backstage_agent = _agent_with(notice, should_apply=True, reviewer_status="rejected")
     monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [SimpleNamespace(project_url="https://example.com")])
     monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])

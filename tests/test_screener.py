@@ -395,7 +395,7 @@ def test_local_screener_ignores_singing_noise_from_other_email_roles(tmp_path):
     assert decision.should_apply is False
     assert decision.llm_used is False
     assert decision.reasons == [
-        "Rejected because LLM screening was unavailable: no API key or call budget."
+        "Rejected because first-pass LLM screening was unavailable: no API key or call budget."
     ]
 
 
@@ -447,7 +447,7 @@ def test_local_screener_allows_singer_character_without_singing_requirement(tmp_
     assert decision.should_apply is False
     assert decision.llm_used is False
     assert decision.reasons == [
-        "Rejected because LLM screening was unavailable: no API key or call budget."
+        "Rejected because first-pass LLM screening was unavailable: no API key or call budget."
     ]
 
 
@@ -498,7 +498,7 @@ def test_local_screener_keeps_overlapping_age_for_llm(tmp_path):
     assert decision.should_apply is False
     assert decision.llm_used is False
     assert decision.reasons == [
-        "Rejected because LLM screening was unavailable: no API key or call budget."
+        "Rejected because first-pass LLM screening was unavailable: no API key or call budget."
     ]
 
 
@@ -597,7 +597,7 @@ def test_local_screener_allows_matching_identity_language_signals(tmp_path):
 
     assert decision.llm_used is False
     assert decision.reasons == [
-        "Rejected because LLM screening was unavailable: no API key or call budget."
+        "Rejected because first-pass LLM screening was unavailable: no API key or call budget."
     ]
 
 
@@ -647,5 +647,5 @@ def test_local_screener_does_not_reject_open_role_for_project_title_only(tmp_pat
 
     assert decision.llm_used is False
     assert decision.reasons == [
-        "Rejected because LLM screening was unavailable: no API key or call budget."
+        "Rejected because first-pass LLM screening was unavailable: no API key or call budget."
     ]

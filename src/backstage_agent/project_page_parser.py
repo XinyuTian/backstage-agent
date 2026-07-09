@@ -362,7 +362,6 @@ def _text_project_shooting_info(page_text: str) -> tuple[str | None, str | None]
         section.append(line.rstrip("."))
     if not section:
         return None, None
-    text = "\n".join(section)
     date_lines = [line for line in section if _looks_like_date_or_schedule(line)]
     location_lines = [line for line in section if line not in date_lines]
     if not location_lines and section:

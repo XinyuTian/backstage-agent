@@ -257,10 +257,12 @@ def _reviewer_detail(row) -> str:
     score = row["reviewer_score"]
     score_text = f" · score {float(score):.2f}" if score is not None else ""
     model_text = f" · {_esc(row['reviewer_model'])}" if row["reviewer_model"] else ""
+    reasons_html = _list(reasons) if reasons else '<p class="muted">No reviewer reasons recorded.</p>'
+    concerns_html = '<p class="muted">Reviewer concerns:</p>' + _list(concerns) if concerns else ""
     return (
         f'<p class="meta">Reviewer status: {_esc(status)}{score_text}{model_text}</p>'
-        f"{_list(reasons) if reasons else '<p class=\"muted\">No reviewer reasons recorded.</p>'}"
-        f"{'<p class=\"muted\">Reviewer concerns:</p>' + _list(concerns) if concerns else ''}"
+        f"{reasons_html}"
+        f"{concerns_html}"
     )
 
 
