@@ -1,14 +1,14 @@
 # Backstage Automation Agent
 
-An intelligent, cost-effective automation agent for scanning daily Backstage casting notification emails, screening roles for fit with an LLM, and preparing or submitting applications for matching roles.
+A local-first, conservative automation agent for Backstage casting workflows. It scans recent Backstage notification emails, extracts casting projects and roles, screens them against an actor profile, stores decisions in SQLite, and prepares application drafts for promising matches.
 
-The first version is intentionally conservative:
+The default workflow is intentionally safe:
 
-- Reads the latest day of Backstage notification emails through IMAP.
-- Extracts candidate casting notices and application links.
-- Uses deterministic rules before calling an LLM, keeping costs low.
-- Stores every decision in SQLite for auditability.
-- Defaults to dry-run mode so applications are drafted, not submitted.
+- scan the latest day of Backstage notification emails
+- run deterministic checks before spending LLM calls
+- use a strict second-pass reviewer before applications
+- store decisions and application blockers for auditability
+- keep `DRY_RUN=true` unless live submission is deliberately implemented and verified
 
 ## Quick Start
 
@@ -17,7 +17,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 cp .env.example .env
-python -m backstage_agent.cli scan --limit 10 --days 1
+python3 -m backstage_agent.cli scan --limit 10 --days 1
+```
+
+For development dependencies:
+
+```bash
+pip install -e '.[dev]'
 ```
 
 ## Configuration
@@ -30,56 +36,101 @@ IMAP_USERNAME=you@example.com
 IMAP_PASSWORD=app-password
 EMAIL_SUBJECT_KEYWORDS=basic filter
 OPENAI_API_KEY=sk-...
+AI_BUILDER_API_KEY=...
 ACTOR_PROFILE_PATH=profile.example.json
+DATABASE_PATH=backstage_agent.sqlite3
 DRY_RUN=true
 ```
 
-For Gmail, use an app password rather than your account password.
+For Gmail, use an app password rather than your account password. Do not store a Backstage password in `.env`.
 
-## Workflow
+Useful settings:
 
-1. `scan` fetches recent Backstage emails whose subject includes the configured keywords.
-2. The parser extracts casting notices from each email.
-3. Cheap local filters reject obvious non-fits.
-4. The LLM scores remaining roles against the actor profile.
-5. Matching roles are written to the database and application drafts are created.
-6. Live submission is blocked unless `DRY_RUN=false` and an application adapter is implemented.
-
-Application questions that require personal knowledge, such as swimming ability, wardrobe ownership, exact availability, or comfort with specific scenes, should pause for user confirmation unless the answer is already captured in the actor profile.
+- `LLM_PROVIDER`, `LLM_MODEL`, `MAX_LLM_CALLS_PER_SCAN`: first-pass screening provider, model, and budget.
+- `REVIEWER_PROVIDER`, `REVIEWER_MODEL`, `MAX_REVIEWER_CALLS_PER_SCAN`: strict reviewer and cover-note provider, model, and budget.
+- `MIN_MATCH_SCORE`: score threshold used by screeners and reviewers.
+- `USE_BROWSER_FOR_BACKSTAGE`: enables authenticated Backstage page fetching through a persistent Playwright browser profile.
+- `BACKSTAGE_BROWSER_PROFILE_PATH`: local browser profile path for stored Backstage session cookies.
+- `BACKSTAGE_BROWSER_HEADLESS`: defaults to false because Backstage may challenge headless browser sessions.
+- `BACKSTAGE_BROWSER_CHANNEL`: defaults to `chrome` when available.
 
 ## Commands
 
 ```bash
-python -m backstage_agent.cli scan --limit 25 --days 1
-python -m backstage_agent.cli parse-sample sample-email.html
-python -m backstage_agent.cli decisions
-python -m backstage_agent.cli show-config
-python -m backstage_agent.cli ui
-python -m backstage_agent.cli backstage-login
-python -m backstage_agent.cli backstage-login-check
+python3 -m backstage_agent.cli scan --limit 25 --days 1
+python3 -m backstage_agent.cli scan --limit 25 --date 2026-07-09
+python3 -m backstage_agent.cli parse-sample sample-email.html
+python3 -m backstage_agent.cli decisions
+python3 -m backstage_agent.cli show-config
+python3 -m backstage_agent.cli ui
+python3 -m backstage_agent.cli backstage-login
+python3 -m backstage_agent.cli backstage-login-check
 ```
 
-`parse-sample` is useful for tuning the parser before connecting a real inbox.
+`parse-sample` is useful for parser tuning before connecting a real inbox.
 
 The `ui` command starts a local dashboard at `http://127.0.0.1:8765` for searching and reviewing saved screening decisions.
 
+## Workflow
+
+1. `scan` fetches recent Backstage emails through IMAP.
+2. The parser extracts project notices from each email.
+3. The agent optionally fetches Backstage project pages and extracts role, location, and date details.
+4. Project-level deterministic and LLM screening decide whether a project should proceed.
+5. A stricter reviewer independently approves, rejects, or holds the project gate.
+6. Approved projects proceed to role-level screening and review.
+7. Approved roles are recorded as application drafts or blocked attempts.
+8. The CLI prints a JSON summary and can send a macOS notification with `--notify`.
+
+Application questions that require personal knowledge, such as swimming ability, wardrobe ownership, exact availability, or comfort with specific scenes, should pause for user confirmation unless the answer is already captured in the actor profile.
+
 ## Persistent Backstage Login
 
-For independent runs that need authenticated Backstage pages, use a dedicated local browser profile:
+For runs that need authenticated Backstage pages, use a dedicated local browser profile:
 
 ```bash
-python -m backstage_agent.cli backstage-login
-python -m backstage_agent.cli backstage-login-check
+python3 -m backstage_agent.cli backstage-login
+python3 -m backstage_agent.cli backstage-login-check
 ```
 
 The first command opens a browser using `BACKSTAGE_BROWSER_PROFILE_PATH` so you can log in once. The second command checks whether that stored session is still logged in. Set `USE_BROWSER_FOR_BACKSTAGE=true` to let scans fetch Backstage pages through that authenticated profile.
 
-`BACKSTAGE_BROWSER_HEADLESS=false` is the default because Backstage may challenge headless browser sessions. This means an automated run may briefly open a browser window on your logged-in Mac when it needs authenticated Backstage pages.
+If Backstage or Cloudflare blocks the automated browser, the agent should stop and report that status instead of trying to bypass the block.
 
-`BACKSTAGE_BROWSER_CHANNEL=chrome` makes Playwright use your installed Google Chrome when available. If Backstage or Cloudflare blocks the automated browser, the agent should stop and report that status instead of trying to bypass the block.
+## Daily Automation
 
-Do not store your Backstage password in `.env`; the browser profile stores session cookies locally instead.
+The daily local run is defined in `scripts/daily_scan.sh` and scheduled by `launchd/com.sarahtxy.backstage-agent.daily.plist`. The intended command shape is:
+
+```bash
+python3 -m backstage_agent.cli scan --days 1 --limit 25 --notify
+```
+
+The script writes logs under `logs/` and sends a macOS notification on completion or failure.
+
+## Testing
+
+Run the full test suite:
+
+```bash
+python3 -m pytest
+```
+
+For targeted work, run the relevant test file, for example:
+
+```bash
+python3 -m pytest tests/test_parser.py tests/test_project_page_parser.py
+```
+
+## Documentation For Future Agents
+
+- `AGENTS.md`: required startup workflow and coding rules for future coding agents.
+- `PROJECT_STATE.md`: current capabilities, priorities, constraints, and known issues.
+- `CHANGELOG.md`: concise behavior-focused change history.
+- `ARCHITECTURE.md`: system flow, module responsibilities, storage, and integrations.
+- `docs/module-guide.md`: task-oriented map from likely changes to relevant files and tests.
 
 ## Project Status
 
-This repository contains the scaffold and core orchestration for the agent. The live Backstage submission adapter is deliberately left as a guarded integration point because it requires account-specific browser flow verification.
+The repository contains the core local orchestration for email scanning, project and role parsing, two-layer screening, review, storage, dashboard review, dry-run application drafting, macOS notification, and daily scheduling assets.
+
+Live Backstage submission is deliberately left as a guarded integration point. When `DRY_RUN=false`, application attempts are blocked until an account-specific browser flow is implemented and verified.

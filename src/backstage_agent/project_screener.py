@@ -45,6 +45,16 @@ class ProjectScreener:
                 reasons=["Rejected by project-level actor profile avoidance rules."],
                 concerns=concerns,
             )
+        if _is_senior_community_project(notice):
+            return ScreeningDecision(
+                notice=notice,
+                score=0.0,
+                should_apply=False,
+                reasons=[
+                    "Rejected locally: project is centered on an older/senior arts community, "
+                    "which does not match the actor's current career-starting goals."
+                ],
+            )
         return None
 
     def _llm_screen(self, notice: CastingNotice) -> ScreeningDecision:
@@ -131,6 +141,59 @@ def project_to_notice(project: ProjectNotice) -> CastingNotice:
         shooting_locations=project.shooting_locations,
         shooting_dates=project.shooting_dates,
     )
+
+
+def with_project_role_context(project: ProjectNotice, roles: list[CastingNotice]) -> ProjectNotice:
+    context_parts = []
+    compensations = [
+        compensation.strip()
+        for role in roles
+        if (compensation := getattr(role, "compensation", None)) and compensation.strip()
+    ]
+    if compensations:
+        context_parts.append(f"Role compensation: {'; '.join(dict.fromkeys(compensations))}")
+    role_summaries = [
+        f"{role_name}: {description}"
+        for role in roles[:4]
+        if (role_name := getattr(role, "role", None))
+        and (description := getattr(role, "description", None))
+    ]
+    if role_summaries:
+        context_parts.append("Role summaries: " + " | ".join(role_summaries))
+    if not context_parts:
+        return project
+    added_context = "\n".join(context_parts)
+    return replace(
+        project,
+        description="\n".join([project.description, added_context]).strip(),
+        raw_text="\n".join([project.raw_text, added_context]).strip(),
+    )
+
+
+def with_project_page_context(project: ProjectNotice, page_context: str) -> ProjectNotice:
+    page_context = page_context.strip()
+    if not page_context or page_context in project.raw_text:
+        return project
+    return replace(
+        project,
+        description="\n".join([project.description, page_context]).strip(),
+        raw_text="\n".join([project.raw_text, page_context]).strip(),
+    )
+
+
+def _is_senior_community_project(notice: CastingNotice) -> bool:
+    text = "\n".join([notice.title, notice.project or "", notice.description, notice.raw_text]).lower()
+    senior_terms = (
+        "55 and above community",
+        "55+ community",
+        "older people in the arts",
+        "senior theatre guild",
+        "senior theater guild",
+        "senior arts community",
+    )
+    if any(term in text for term in senior_terms):
+        return True
+    return "virtual staged reading event" in text and "jack truman productions" in text
 
 
 def with_project_shooting_info(

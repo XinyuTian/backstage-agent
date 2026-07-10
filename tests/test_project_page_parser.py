@@ -1,5 +1,5 @@
 from backstage_agent.models import ProjectNotice
-from backstage_agent.project_page_parser import parse_project_page_roles
+from backstage_agent.project_page_parser import parse_project_page_roles, project_page_context
 
 
 def test_parse_project_page_roles_from_expanded_backstage_text():
@@ -137,3 +137,17 @@ def test_parse_project_page_roles_includes_embedded_gender_display():
 
     assert roles[0].description.startswith("Lead, Male, 18-50")
     assert "Lead, Male, 18-50" in roles[0].raw_text
+
+
+def test_project_page_context_keeps_project_overview_before_roles():
+    html = """
+<h1>Virtual Staged Reading Event</h1>
+<p>Casting six actors for The Senior Theatre Guild, a new theatre group focused on the 55 and above community.</p>
+<h2>Roles in this project</h2>
+<p>Actor 1</p>
+"""
+
+    context = project_page_context(html)
+
+    assert "focused on the 55 and above community" in context
+    assert "Actor 1" not in context

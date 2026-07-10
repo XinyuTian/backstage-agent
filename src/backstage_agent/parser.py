@@ -51,19 +51,24 @@ def parse_project_notices(message: EmailMessage) -> list[ProjectNotice]:
     if projects:
         return projects
 
-    return [
-        ProjectNotice(
-            source_message_id=message.message_id,
-            title=notice.project or notice.title,
-            project_url=notice.application_url,
-            description=notice.description,
-            raw_text=notice.raw_text,
-            project_date=notice.project_date,
-            project_labels=notice.project_labels,
-            project_key=notice.project_key,
+    fallback_projects = []
+    for notice in parse_casting_notices(message):
+        title = notice.project or notice.title
+        if _is_generic_casting_project_title(title):
+            continue
+        fallback_projects.append(
+            ProjectNotice(
+                source_message_id=message.message_id,
+                title=title,
+                project_url=notice.application_url,
+                description=notice.description,
+                raw_text=notice.raw_text,
+                project_date=notice.project_date,
+                project_labels=notice.project_labels,
+                project_key=notice.project_key,
+            )
         )
-        for notice in parse_casting_notices(message)
-    ]
+    return fallback_projects
 
 
 def parse_casting_notices(message: EmailMessage) -> list[CastingNotice]:
@@ -324,7 +329,14 @@ def _project_chunk_only(text: str) -> str:
 
 
 def _is_project_chunk(text: str) -> bool:
-    return text.lower().startswith(("casting ", "now casting ")) or _posted_project_title(text) is not None
+    if _posted_project_title(text) is not None:
+        return True
+    lower = text.lower()
+    if lower.startswith("now casting "):
+        return True
+    if not lower.startswith("casting "):
+        return False
+    return _explicit_project_title_from_casting_text(text) is not None
 
 
 def _project_title(text: str) -> str:
@@ -337,6 +349,9 @@ def _project_title(text: str) -> str:
     single_quoted = re.search(r"'([^']+)'", text)
     if single_quoted:
         return _normalize_project_title(single_quoted.group(1))
+    explicit_title = _explicit_project_title_from_casting_text(text)
+    if explicit_title:
+        return _normalize_project_title(explicit_title)
     first_line = _first_line(text) or "Untitled Project"
     first_line = re.sub(r"^(Casting|Now Casting)\s+", "", first_line, flags=re.I)
     return _normalize_project_title(first_line.rstrip("."))
@@ -358,6 +373,32 @@ def _posted_project_title(text: str) -> str | None:
                 continue
             return candidate
     return None
+
+
+def _explicit_project_title_from_casting_text(text: str) -> str | None:
+    first_line = _first_line(text) or ""
+    patterns = (
+        r"^Casting\s+(?:lead\s+roles\s+for|roles\s+for|background\s+for)\s+(.+?)(?:,|\.)",
+        r"^Casting\s+(.+?)\s+(?:feature|short|film|series|commercial|show|play|musical)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, first_line, flags=re.I)
+        if match:
+            title = match.group(1).strip(" ,.;:'\"")
+            if title and not title.lower().startswith(("performers for", "actors for", "talent for")):
+                return title
+    return None
+
+
+def _is_generic_casting_project_title(title: str) -> bool:
+    lower = title.lower()
+    return lower.startswith(
+        (
+            "casting performers for ",
+            "casting actors for ",
+            "casting talent for ",
+        )
+    )
 
 
 def _is_digest_metadata(line: str) -> bool:

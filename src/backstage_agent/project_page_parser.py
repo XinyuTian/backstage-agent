@@ -116,6 +116,32 @@ def parse_project_page_roles(project: ProjectNotice, html: str) -> list[CastingN
     return roles
 
 
+def project_page_context(html: str) -> str:
+    page_text = BeautifulSoup(html or "", "html.parser").get_text("\n", strip=True)
+    lines = [line.strip() for line in page_text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    stop_markers = {
+        "roles in this project",
+        "dates & locations",
+        "compensation & contract",
+        "key details",
+    }
+    context: list[str] = []
+    for line in lines:
+        lower = line.lower()
+        if lower in stop_markers:
+            break
+        if lower in SKIP_LINES or lower in STOP_LINES:
+            continue
+        if lower in {"backstage", "apply", "share", "save"}:
+            continue
+        context.append(line)
+        if len(" ".join(context)) > 3000:
+            break
+    return "\n".join(context)
+
+
 def _with_project_info(
     project: ProjectNotice,
     shooting_locations: str | None,

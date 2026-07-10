@@ -7,8 +7,13 @@ from .application import ApplicationService
 from .email_client import ImapEmailClient
 from .models import ApplicationDraft, ReviewDecision, ScreeningDecision
 from .parser import parse_project_notices
-from .project_page_parser import parse_project_page_roles
-from .project_screener import ProjectScreener, with_project_shooting_info
+from .project_page_parser import parse_project_page_roles, project_page_context
+from .project_screener import (
+    ProjectScreener,
+    with_project_page_context,
+    with_project_role_context,
+    with_project_shooting_info,
+)
 from .reviewer import DecisionReviewer
 from .screener import RoleScreener
 from .settings import Settings, load_actor_profile
@@ -63,6 +68,8 @@ class BackstageAgent:
                     continue
                 project_id = self.store.record_project(project)
                 html = self.project_pages.fetch_html(project.project_url)
+                if html:
+                    project = with_project_page_context(project, project_page_context(html))
                 page_roles = parse_project_page_roles(project, html or "") if html else []
                 if page_roles:
                     self.store.update_project_info(
@@ -75,6 +82,7 @@ class BackstageAgent:
                         page_roles[0].shooting_locations,
                         page_roles[0].shooting_dates,
                     )
+                    project = with_project_role_context(project, page_roles)
                 project_decision = self.project_screener.screen(project)
                 project_decision_id = self.store.record_decision(project_decision)
                 project_decisions.append(project_decision)

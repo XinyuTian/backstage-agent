@@ -10,11 +10,17 @@ from datetime import date
 from backstage_agent.application import ApplicationService
 from backstage_agent.models import CastingNotice, ProjectNotice
 from backstage_agent.notifier import send_mac_notification
-from backstage_agent.project_screener import ProjectScreener
+from backstage_agent.project_page_parser import parse_project_page_roles, project_page_context
+from backstage_agent.project_screener import (
+    ProjectScreener,
+    with_project_page_context,
+    with_project_role_context,
+)
 from backstage_agent.reviewer import DecisionReviewer
 from backstage_agent.screener import RoleScreener
 from backstage_agent.settings import load_actor_profile, load_settings
 from backstage_agent.storage import DecisionStore
+from backstage_agent.web_client import ProjectPageClient
 
 
 def main() -> None:
@@ -33,6 +39,7 @@ def main() -> None:
     role_screener = RoleScreener(settings, profile)
     reviewer = DecisionReviewer(settings, profile)
     applications = ApplicationService(settings, profile)
+    project_pages = ProjectPageClient(settings)
 
     _delete_date_rows(settings.database_path, target_date)
 
@@ -46,7 +53,15 @@ def main() -> None:
         roles_by_project_key[role.project_key].append(role)
 
     for project in source_projects:
+        if _is_generic_false_project(project):
+            continue
         project_id = store.record_project(project)
+        html = project_pages.fetch_html(project.project_url)
+        if html:
+            project = with_project_page_context(project, project_page_context(html))
+        page_roles = parse_project_page_roles(project, html or "") if html else []
+        project_roles = page_roles or roles_by_project_key[project.project_key]
+        project = with_project_role_context(project, project_roles)
         project_decision = project_screener.screen(project)
         project_decision_id = store.record_decision(project_decision)
         project_decisions.append(project_decision)
@@ -59,7 +74,7 @@ def main() -> None:
         if not project_review.approved:
             continue
 
-        for role in roles_by_project_key[project.project_key]:
+        for role in project_roles:
             store.record_role(project_id, role)
             role_decision = role_screener.screen(role)
             role_decision_id = store.record_decision(role_decision)
@@ -216,6 +231,17 @@ def _date_from_text(value: str | None) -> date | None:
     if not value:
         return None
     return date.fromisoformat(value)
+
+
+def _is_generic_false_project(project: ProjectNotice) -> bool:
+    return project.title.lower().startswith(
+        (
+            "performers for ",
+            "actors for ",
+            "talent for ",
+            "six actors to do a virtual staged reading",
+        )
+    )
 
 
 if __name__ == "__main__":

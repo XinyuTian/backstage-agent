@@ -240,3 +240,29 @@ Apply
     assert [project.title for project in projects] == ["Video Library Video Shoot"]
     assert "Boston, MA" not in projects[0].description
     assert "International Highlight" not in projects[0].description
+
+
+def test_parse_project_notices_ignores_generic_casting_performers_sentence():
+    message = EmailMessage(
+        message_id="m8",
+        subject="21 New Roles Available for basic filter - Jul 9",
+        sender="Backstage",
+        received_at=None,
+        html="",
+        text="""
+Casting performers for the 10th Annual Beyond the 7th Wall Film Festival. Performers will go up in front of a live audience to give a short presentation and then be on a panel.
+Seeking talent from:
+San Francisco, CA
+Richie Rhombus
+Supporting, 30-45
+Apply
+""",
+    )
+
+    projects = parse_project_notices(message)
+
+    assert all(
+        "performers for the 10th Annual Beyond the 7th Wall Film Festival"
+        not in project.title
+        for project in projects
+    )
