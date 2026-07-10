@@ -96,6 +96,20 @@ Use when the system cannot produce a trustworthy decision because of parse, mode
 
 Malformed LLM output gets one repair retry. If it still fails validation, the role becomes `Data/Parse Error`.
 
+## Screening Order
+
+The pipeline always screens projects before roles.
+
+1. Parse project notices from the email digest.
+2. Enrich each project from its Backstage page when available.
+3. Run project-level local rules, first LLM screening, reviewer validation, and bucket resolution.
+4. Continue to role-level screening only when the project bucket allows role screening.
+5. Run role-level local rules, first LLM screening, reviewer validation, and bucket resolution for each role.
+6. Application drafting only considers role-level `Auto Apply/Draft` outcomes.
+
+Project-level decisions answer: "Should this project proceed to role selection?"
+Role-level decisions answer: "Should this specific role be applied to or reviewed?"
+
 ## Three-Filter Workflow
 
 ### 1. Local Rules
