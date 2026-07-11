@@ -74,6 +74,11 @@ class ScreeningDecision:
     reasons: list[str]
     concerns: list[str] = field(default_factory=list)
     llm_used: bool = False
+    final_bucket: str | None = None
+    classifier_json: dict | None = None
+    reviewer_json: dict | None = None
+    reviewer_impact: str = ""
+    schema_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,10 @@ class ReviewDecision:
     reasons: list[str]
     concerns: list[str] = field(default_factory=list)
     model: str = ""
+    final_bucket: str | None = None
+    reviewer_json: dict | None = None
+    reviewer_impact: str = ""
+    schema_error: str = ""
 
     @property
     def approved(self) -> bool:

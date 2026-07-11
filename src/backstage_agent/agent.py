@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from .decision_core import should_draft_bucket, should_review_bucket
 from .application import ApplicationService
 from .email_client import ImapEmailClient
 from .models import ApplicationDraft, ReviewDecision, ScreeningDecision
@@ -86,12 +87,16 @@ class BackstageAgent:
                 project_decision = self.project_screener.screen(project)
                 project_decision_id = self.store.record_decision(project_decision)
                 project_decisions.append(project_decision)
-                if not project_decision.should_apply:
+                if not _should_review(project_decision):
                     continue
-                project_review = self.reviewer.review_project(project_decision.notice)
+                project_review = self.reviewer.review_project(
+                    project_decision.notice,
+                    initial_bucket=project_decision.final_bucket,
+                    classifier_json=project_decision.classifier_json,
+                )
                 self.store.record_review(project_decision_id, project_review)
                 project_reviews.append(project_review)
-                if not project_review.approved:
+                if not _review_allows_next_step(project_review):
                     continue
                 for role in page_roles:
                     if self.store.role_exists(role.role_key) or self.store.decision_exists(role.role_key):
@@ -104,11 +109,15 @@ class BackstageAgent:
                 decision = self.screener.screen(notice)
                 decision_id = self.store.record_decision(decision)
                 decisions.append(decision)
-                if decision.should_apply:
-                    review = self.reviewer.review(notice)
+                if _should_review(decision):
+                    review = self.reviewer.review(
+                        notice,
+                        initial_bucket=decision.final_bucket,
+                        classifier_json=decision.classifier_json,
+                    )
                     self.store.record_review(decision_id, review)
                     reviews.append(review)
-                    if review.approved:
+                    if _review_allows_next_step(review):
                         try:
                             draft = self.applications.create_or_submit(decision)
                         except Exception as exc:  # noqa: BLE001
@@ -129,3 +138,15 @@ class BackstageAgent:
             reviews=reviews,
             applications=application_drafts,
         )
+
+
+def _should_review(decision: ScreeningDecision) -> bool:
+    if decision.final_bucket:
+        return should_review_bucket(decision.final_bucket)
+    return decision.should_apply
+
+
+def _review_allows_next_step(review: ReviewDecision) -> bool:
+    if review.final_bucket:
+        return should_draft_bucket(review.final_bucket)
+    return review.approved

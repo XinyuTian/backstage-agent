@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sarahtxy.backstage-agent.ui</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/sarahtxy/dev/backstage_agent/.venv/bin/python</string>
+    <string>-u</string>
+    <string>-m</string>
+    <string>backstage_agent.cli</string>
+    <string>ui</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/sarahtxy/dev/backstage_agent</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/sarahtxy/dev/backstage_agent/logs/ui.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/sarahtxy/dev/backstage_agent/logs/ui.err.log</string>
+</dict>
+</plist>

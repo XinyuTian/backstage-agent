@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .agent import BackstageAgent
 from .browser_session import BrowserSessionError, check_backstage_login, open_backstage_login
+from .decision_core import DecisionBucket, label_for_bucket
 from .models import EmailMessage
 from .notifier import send_mac_notification
 from .parser import parse_casting_notices
@@ -120,7 +121,23 @@ def _scan_summary(result) -> str:
         f"{needs_check} need check, {rejected} rejected."
     )
     budget_warnings = _budget_warnings(result)
+    bucket_summary = _bucket_summary(result)
+    if bucket_summary:
+        summary = f"{summary} {bucket_summary}"
     return f"{summary} {budget_warnings}" if budget_warnings else summary
+
+
+def _bucket_summary(result) -> str:
+    counts = {bucket.value: 0 for bucket in DecisionBucket}
+    for decision in [*result.project_decisions, *result.decisions]:
+        if decision.final_bucket in counts:
+            counts[decision.final_bucket] += 1
+    parts = [
+        f"{count} {label_for_bucket(bucket)}"
+        for bucket, count in counts.items()
+        if count
+    ]
+    return "Buckets: " + ", ".join(parts) + "." if parts else ""
 
 
 def _budget_warnings(result) -> str:

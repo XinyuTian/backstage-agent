@@ -6,8 +6,19 @@ from dataclasses import asdict
 
 from openai import OpenAI
 
+from .decision_core import (
+    DecisionBucket,
+    StructuredScreening,
+    resolve_final_bucket,
+    should_draft_bucket,
+)
 from .models import ActorProfile, CastingNotice, ScreeningDecision
 from .settings import Settings
+
+ROLE_SCREENING_ALLOWED_PREFERENCES = (
+    "Do not reject roles because they require active Instagram tagging "
+    "when the actor profile has comfortable_with_active_instagram_tagging=true."
+)
 
 
 class RoleScreener:
@@ -30,6 +41,7 @@ class RoleScreener:
                     "Rejected because first-pass LLM screening was unavailable: "
                     "no API key or call budget."
                 ],
+                final_bucket=DecisionBucket.READY_FOR_REVIEW.value,
             )
         return self._llm_screen(notice)
 
@@ -42,6 +54,7 @@ class RoleScreener:
                 should_apply=False,
                 reasons=["Rejected by actor profile avoidance rules."],
                 concerns=concerns,
+                final_bucket=DecisionBucket.REJECT.value,
             )
 
         hard_reject_reasons = []
@@ -77,68 +90,123 @@ class RoleScreener:
                 should_apply=False,
                 reasons=hard_reject_reasons,
                 concerns=[],
+                final_bucket=DecisionBucket.REJECT.value,
             )
 
         return None
 
     def _llm_screen(self, notice: CastingNotice) -> ScreeningDecision:
         self._llm_calls += 1
-        response = self._client.chat.completions.create(
-            model=self.settings.llm_model,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You screen casting notices for fit. Return compact JSON with "
-                        "score between 0 and 1, should_apply boolean, reasons array, "
-                        "and concerns array. This is the optimistic first-pass selector; "
-                        "pass plausible fits so a stricter independent reviewer can make "
-                        "the final call. Still reject concrete conflicts. "
-                        "Treat age ranges as compatible when they overlap at all; "
-                        "for example actor 25-45 fits role 18-35. Do not reject "
-                        "because the ranges are not identical. Only cite a comfort "
-                        "boundary when the actor profile explicitly avoids it or an "
-                        "attribute says they are not comfortable with it. If an "
-                        "attribute says comfortable_with_horror is true, do not treat "
-                        "horror as a concern by itself. Do not infer explicit content "
-                        "from horror, romance, or mature themes unless the notice says so. "
-                        "Do not reject unpaid roles or list unpaid compensation as a concern "
-                        "when the actor profile says comfortable_with_unpaid_roles is true. "
-                        "Treat unreimbursed travel expenses as different from an unpaid role. "
-                        "Only include concerns that are concrete conflicts or open questions "
-                        "from the casting notice; do not list generic actor boundaries as "
-                        "concerns when the notice does not mention them. Respect explicit "
-                        "ethnicity, race, language, and cultural identity signals in the "
-                        "notice; do not treat a role as a fit when those signals clearly do "
-                        "not match the actor profile."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "actor_profile": asdict(self.profile),
-                            "casting_notice": asdict(notice),
-                            "minimum_score": self.settings.min_match_score,
-                        },
-                        default=str,
-                    ),
-                },
-            ],
-        )
-        content = response.choices[0].message.content or "{}"
-        data = json.loads(content)
-        score = float(data.get("score", 0.0))
+        data, error = self._request_structured_screening(notice, _ROLE_STRUCTURED_SCREENING_PROMPT)
+        if data is None:
+            artifacts = resolve_final_bucket(schema_error=error)
+            return ScreeningDecision(
+                notice=notice,
+                score=0.0,
+                should_apply=False,
+                reasons=["Data/parse error from first-pass role LLM screening."],
+                concerns=[error] if error else [],
+                llm_used=True,
+                final_bucket=artifacts.final_bucket.value,
+                schema_error=artifacts.schema_error,
+            )
+        try:
+            screening = StructuredScreening.from_json(data)
+        except ValueError as exc:
+            artifacts = resolve_final_bucket(schema_error=f"structured screening validation failed: {exc}")
+            return ScreeningDecision(
+                notice=notice,
+                score=0.0,
+                should_apply=False,
+                reasons=["Data/parse error from first-pass role LLM screening."],
+                concerns=[str(exc)],
+                llm_used=True,
+                final_bucket=artifacts.final_bucket.value,
+                classifier_json=data,
+                schema_error=artifacts.schema_error,
+            )
+        artifacts = resolve_final_bucket(screening=screening)
         return ScreeningDecision(
             notice=notice,
-            score=score,
-            should_apply=bool(data.get("should_apply", score >= self.settings.min_match_score)),
-            reasons=list(data.get("reasons", [])),
-            concerns=list(data.get("concerns", [])),
+            score=screening.confidence,
+            should_apply=should_draft_bucket(artifacts.final_bucket),
+            reasons=screening.fit_reasons,
+            concerns=screening.concerns,
             llm_used=True,
+            final_bucket=artifacts.final_bucket.value,
+            classifier_json=artifacts.classifier_json,
+            reviewer_impact=artifacts.reviewer_impact,
         )
+
+    def _request_structured_screening(
+        self,
+        notice: CastingNotice,
+        system_prompt: str,
+    ) -> tuple[dict | None, str]:
+        last_error = ""
+        for attempt in range(2):
+            prompt = system_prompt
+            if attempt:
+                prompt = (
+                    "Repair the previous response. Return only valid JSON matching the "
+                    "structured screening schema. "
+                    f"Previous error: {last_error}"
+                )
+            response = self._client.chat.completions.create(
+                model=self.settings.llm_model,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "actor_profile": asdict(self.profile),
+                                "casting_notice": asdict(notice),
+                                "minimum_score": self.settings.min_match_score,
+                            },
+                            default=str,
+                        ),
+                    },
+                ],
+            )
+            content = response.choices[0].message.content or "{}"
+            try:
+                data = json.loads(content)
+                StructuredScreening.from_json(data)
+                return data, ""
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = f"structured screening validation failed: {exc}"
+        return None, last_error
+
+
+_ROLE_STRUCTURED_SCREENING_PROMPT = (
+    "You screen casting notices for fit. Return only JSON with fields: "
+    "suggested_bucket, role_type, project_type, career_value_score, "
+    "required_preferences, missing_preference_keys, pay_burden, travel_burden, "
+    "time_burden, fit_reasons, concerns, evidence_snippets, confidence. "
+    "suggested_bucket must be one of auto_apply_draft, ready_for_review, "
+    "needs_my_preference, reject, data_parse_error. career_value_score is 0-5; "
+    "confidence is 0-1. Use auto_apply_draft only for roles worth drafting now. "
+    "Use ready_for_review for worthwhile roles that should be eyeballed first. "
+    "Use needs_my_preference for unknown actor preferences, and include profile-style "
+    "keys in missing_preference_keys. Use reject for concrete conflicts. "
+    "Use data_parse_error only when the notice is too malformed to classify. "
+    "This is the optimistic first-pass selector; pass plausible fits so a stricter "
+    "independent reviewer can validate them. Still reject concrete conflicts. "
+    "Treat age ranges as compatible when they overlap at all. Only cite a comfort "
+    "boundary when the actor profile explicitly avoids it or an attribute says they "
+    "are not comfortable with it. Do not reject horror by itself when "
+    "comfortable_with_horror is true. Do not reject unpaid roles when "
+    "comfortable_with_unpaid_roles is true. Treat unreimbursed travel expenses as "
+    "different from unpaid roles. "
+    f"{ROLE_SCREENING_ALLOWED_PREFERENCES} "
+    "Respect explicit ethnicity, race, language, and cultural identity signals."
+)
 
 
 def _llm_client(settings: Settings) -> OpenAI | None:
@@ -193,13 +261,13 @@ def _avoidance_concerns(notice: CastingNotice, avoid_terms: list[str]) -> list[s
 
 
 def _role_genders(notice: CastingNotice) -> list[str]:
-    genders = []
+    explicit_genders = []
     scoped_text = _role_scoped_text(notice)
     lower_scoped = scoped_text.lower()
     if re.search(r"\b(male lead|male role|male actor|man)\b", lower_scoped):
-        genders.append("male")
+        explicit_genders.append("male")
     if re.search(r"\b(female lead|female role|female actor|woman)\b", lower_scoped):
-        genders.append("female")
+        explicit_genders.append("female")
 
     text = "\n".join(part for part in (scoped_text, notice.raw_text) if part)
     for line in text.splitlines():
@@ -207,14 +275,18 @@ def _role_genders(notice: CastingNotice) -> list[str]:
             continue
         lower = line.lower()
         if "female" in lower:
-            genders.append("female")
+            explicit_genders.append("female")
         if re.search(r"\bmale\b", lower):
-            genders.append("male")
+            explicit_genders.append("male")
         if "non-binary" in lower or "nonbinary" in lower:
-            genders.append("non-binary")
+            explicit_genders.append("non-binary")
         if "gender-nonconforming" in lower:
-            genders.append("gender-nonconforming")
+            explicit_genders.append("gender-nonconforming")
         break
+    if explicit_genders:
+        return list(dict.fromkeys(explicit_genders))
+
+    genders = []
     lower_text = text.lower()
     if re.search(r"\b(he|him|his|father|son|brother|husband|boyfriend|king|warrior)\b", lower_text):
         genders.append("male")

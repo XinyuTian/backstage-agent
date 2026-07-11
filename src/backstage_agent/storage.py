@@ -35,9 +35,11 @@ class DecisionStore:
                 INSERT INTO decisions (
                   source_message_id, title, application_url, score, should_apply,
                   reasons_json, concerns_json, llm_used, notice_json, project_date,
-                  project_key, role_key, shooting_locations, shooting_dates
+                  project_key, role_key, shooting_locations, shooting_dates,
+                  final_bucket, classifier_json, reviewer_json, reviewer_impact,
+                  schema_error
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision.notice.source_message_id,
@@ -56,6 +58,11 @@ class DecisionStore:
                     role_key,
                     decision.notice.shooting_locations,
                     decision.notice.shooting_dates,
+                    decision.final_bucket,
+                    _json_or_none(decision.classifier_json),
+                    _json_or_none(decision.reviewer_json),
+                    decision.reviewer_impact,
+                    decision.schema_error,
                 ),
             )
             return int(cursor.lastrowid)
@@ -251,7 +258,11 @@ class DecisionStore:
                     reviewer_score = ?,
                     reviewer_reasons_json = ?,
                     reviewer_concerns_json = ?,
-                    reviewer_model = ?
+                    reviewer_model = ?,
+                    final_bucket = COALESCE(?, final_bucket),
+                    reviewer_json = COALESCE(?, reviewer_json),
+                    reviewer_impact = ?,
+                    schema_error = COALESCE(NULLIF(?, ''), schema_error)
                 WHERE id = ?
                 """,
                 (
@@ -260,6 +271,37 @@ class DecisionStore:
                     json.dumps(review.reasons),
                     json.dumps(review.concerns),
                     review.model,
+                    review.final_bucket,
+                    _json_or_none(review.reviewer_json),
+                    review.reviewer_impact,
+                    review.schema_error,
+                    decision_id,
+                ),
+            )
+
+    def update_decision_artifacts(
+        self,
+        decision_id: int,
+        final_bucket: str | None = None,
+        reviewer_json: dict | None = None,
+        reviewer_impact: str = "",
+        schema_error: str = "",
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE decisions
+                SET final_bucket = COALESCE(?, final_bucket),
+                    reviewer_json = COALESCE(?, reviewer_json),
+                    reviewer_impact = ?,
+                    schema_error = COALESCE(NULLIF(?, ''), schema_error)
+                WHERE id = ?
+                """,
+                (
+                    final_bucket,
+                    _json_or_none(reviewer_json),
+                    reviewer_impact,
+                    schema_error,
                     decision_id,
                 ),
             )
@@ -287,6 +329,8 @@ class DecisionStore:
                       d.shooting_locations, d.shooting_dates,
                       d.reviewer_status, d.reviewer_score,
                       d.reviewer_reasons_json, d.reviewer_concerns_json, d.reviewer_model,
+                      d.final_bucket, d.classifier_json, d.reviewer_json,
+                      d.reviewer_impact, d.schema_error,
                       (
                         SELECT a.status
                         FROM applications a
@@ -329,20 +373,31 @@ class DecisionStore:
                     SELECT 1 FROM applications a
                     WHERE a.title = d.title AND a.status = 'submitted_backstage'
                   ) THEN 1 ELSE 0 END) AS applied_count,
-                  SUM(CASE WHEN d.should_apply = 1
-                    AND d.reviewer_status = 'approved'
+                  SUM(CASE WHEN (
+                    d.final_bucket = 'auto_apply_draft'
+                    OR (d.final_bucket IS NULL AND d.should_apply = 1 AND d.reviewer_status = 'approved')
+                  )
                     AND NOT EXISTS (
                     SELECT 1 FROM applications a
                     WHERE a.title = d.title AND a.status = 'submitted_backstage'
                   ) THEN 1 ELSE 0 END) AS passed_count,
-                  SUM(CASE WHEN d.should_apply = 1
-                    AND COALESCE(d.reviewer_status, '') IN ('rejected', 'hold', 'error', '')
+                  SUM(CASE WHEN (
+                    d.final_bucket IN ('ready_for_review', 'needs_my_preference', 'data_parse_error')
+                    OR (
+                      d.final_bucket IS NULL
+                      AND d.should_apply = 1
+                      AND COALESCE(d.reviewer_status, '') IN ('rejected', 'hold', 'error', '')
+                    )
+                  )
                     AND NOT EXISTS (
                       SELECT 1 FROM applications a
                       WHERE a.title = d.title AND a.status = 'submitted_backstage'
                     )
                   THEN 1 ELSE 0 END) AS needs_check_count,
-                  SUM(CASE WHEN d.should_apply = 0 THEN 1 ELSE 0 END) AS reject_count
+                  SUM(CASE WHEN (
+                    d.final_bucket = 'reject'
+                    OR (d.final_bucket IS NULL AND d.should_apply = 0)
+                  ) THEN 1 ELSE 0 END) AS reject_count
                 FROM decisions d
                 {where}
                 """,
@@ -399,7 +454,12 @@ class DecisionStore:
                   project_key TEXT,
                   role_key TEXT,
                   shooting_locations TEXT,
-                  shooting_dates TEXT
+                  shooting_dates TEXT,
+                  final_bucket TEXT,
+                  classifier_json TEXT,
+                  reviewer_json TEXT,
+                  reviewer_impact TEXT,
+                  schema_error TEXT
                 );
                 CREATE TABLE IF NOT EXISTS applications (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -462,6 +522,11 @@ class DecisionStore:
                 "role_key": "TEXT",
                 "shooting_locations": "TEXT",
                 "shooting_dates": "TEXT",
+                "final_bucket": "TEXT",
+                "classifier_json": "TEXT",
+                "reviewer_json": "TEXT",
+                "reviewer_impact": "TEXT",
+                "schema_error": "TEXT",
             }.items():
                 if column_name not in columns:
                     conn.execute(f"ALTER TABLE decisions ADD COLUMN {column_name} {column_type}")
@@ -605,6 +670,12 @@ def _date_from_text(value: str | None):
         return None
 
 
+def _json_or_none(value: dict | None) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, separators=(",", ": "))
+
+
 def _decision_filter_sql(
     query: str = "",
     decision: str = "all",
@@ -629,7 +700,11 @@ def _decision_filter_sql(
     if decision in {"apply", "passed", "approved"}:
         clauses.append(
             """
-            d.should_apply = 1 AND d.reviewer_status = 'approved' AND NOT EXISTS (
+            (
+              d.final_bucket = 'auto_apply_draft'
+              OR (d.final_bucket IS NULL AND d.should_apply = 1 AND d.reviewer_status = 'approved')
+            )
+            AND NOT EXISTS (
               SELECT 1 FROM applications a
               WHERE a.title = d.title AND a.status = 'submitted_backstage'
             )
@@ -647,8 +722,14 @@ def _decision_filter_sql(
     elif decision in {"needs_check", "hold"}:
         clauses.append(
             """
-            d.should_apply = 1
-            AND COALESCE(d.reviewer_status, '') IN ('rejected', 'hold', 'error', '')
+            (
+              d.final_bucket IN ('ready_for_review', 'needs_my_preference', 'data_parse_error')
+              OR (
+                d.final_bucket IS NULL
+                AND d.should_apply = 1
+                AND COALESCE(d.reviewer_status, '') IN ('rejected', 'hold', 'error', '')
+              )
+            )
             AND NOT EXISTS (
               SELECT 1 FROM applications a
               WHERE a.title = d.title AND a.status = 'submitted_backstage'
@@ -656,9 +737,13 @@ def _decision_filter_sql(
             """
         )
     elif decision == "reject":
-        clauses.append("d.should_apply = 0")
+        clauses.append(
+            "(d.final_bucket = 'reject' OR (d.final_bucket IS NULL AND d.should_apply = 0))"
+        )
     elif decision == "skipped":
-        clauses.append("d.should_apply = 0")
+        clauses.append(
+            "(d.final_bucket = 'reject' OR (d.final_bucket IS NULL AND d.should_apply = 0))"
+        )
     if method == "llm":
         clauses.append("d.llm_used = 1")
     elif method == "local":

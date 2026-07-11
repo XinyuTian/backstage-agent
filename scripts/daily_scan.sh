@@ -10,6 +10,13 @@ mkdir -p logs
   echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Starting daily Backstage scan"
   if "$PROJECT_DIR/.venv/bin/python" -m backstage_agent.cli scan --days 1 --limit 25 --notify; then
     echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Finished daily Backstage scan"
+    if "$PROJECT_DIR/scripts/ensure_dashboard.sh"; then
+      echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Dashboard health check passed"
+    else
+      /usr/bin/osascript -e 'display notification "Open logs/daily-scan.err.log for details." with title "Backstage dashboard failed"' >/dev/null 2>&1 || true
+      echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Dashboard health check failed"
+      exit 1
+    fi
   else
     /usr/bin/osascript -e 'display notification "Open logs/daily-scan.err.log for details." with title "Backstage Agent failed"' >/dev/null 2>&1 || true
     echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S %Z')] Daily Backstage scan failed"

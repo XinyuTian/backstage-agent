@@ -24,10 +24,11 @@ Use this guide to choose the smallest set of files to read for a task.
 ## Screening And Review
 
 - Start with `src/backstage_agent/agent.py` to understand the order of project gates, project reviews, role screening, role reviews, and applications.
+- Use `src/backstage_agent/decision_core.py` for the five final buckets, structured model validation, reviewer downgrade policy, and reusable screening rules.
 - Use `src/backstage_agent/project_screener.py` for project-level local checks and first-pass project LLM screening.
 - Use `src/backstage_agent/screener.py` for role-level local checks and first-pass role LLM screening.
-- Use `src/backstage_agent/reviewer.py` for strict reviewer behavior and reviewer provider calls.
-- Relevant tests: `tests/test_agent_review_gate.py`, `tests/test_project_screener.py`, `tests/test_screener.py`.
+- Use `src/backstage_agent/reviewer.py` for downgrade-only reviewer behavior and reviewer provider calls.
+- Relevant tests: `tests/test_decision_core.py`, `tests/test_structured_screening.py`, `tests/test_structured_reviewer.py`, `tests/test_agent_review_gate.py`, `tests/test_project_screener.py`, `tests/test_screener.py`.
 
 ## Application Drafting
 
@@ -39,7 +40,7 @@ Use this guide to choose the smallest set of files to read for a task.
 
 - Start with `src/backstage_agent/storage.py` for SQLite schema, persistence, search filters, status counts, and lightweight migrations.
 - Use `src/backstage_agent/ui.py` for dashboard rendering, filters, status labels, and application blocker display.
-- Keep screening/review status distinct from application blocker state.
+- Keep screening/review status distinct from application blocker state. Structured rows include final bucket, classifier JSON, reviewer JSON, reviewer impact, and schema errors.
 - Relevant tests: `tests/test_storage_dashboard.py`, `tests/test_ui_labels.py`.
 
 ## Backstage Browser Access

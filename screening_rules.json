@@ -1,0 +1,59 @@
+{
+  "bucket_labels": {
+    "auto_apply_draft": "Auto Apply/Draft",
+    "ready_for_review": "Ready For Review",
+    "needs_my_preference": "Needs My Preference",
+    "reject": "Reject",
+    "data_parse_error": "Data/Parse Error"
+  },
+  "career_value": {
+    "scripted_acting": 5,
+    "student_indie_film": 4,
+    "unpaid_theater": 4,
+    "staged_reading_role": 4,
+    "commercial_speaking": 3,
+    "ugc_testimonial": 3,
+    "music_video_performance": 3,
+    "host_presenter": 3,
+    "background_extra": 2,
+    "audience_atmosphere": 2,
+    "generic_social_media": 2,
+    "modeling_appearance": 1,
+    "brand_promo_little_acting": 1,
+    "adult_explicit": 0,
+    "mission_mismatch": 0,
+    "required_skill_mismatch": 0
+  },
+  "preferences": {
+    "active_instagram_tagging": {
+      "profile_key": "comfortable_with_active_instagram_tagging",
+      "label": "Active Instagram tagging"
+    },
+    "unpaid_roles": {
+      "profile_key": "comfortable_with_unpaid_roles",
+      "label": "Unpaid roles"
+    },
+    "horror": {
+      "profile_key": "comfortable_with_horror",
+      "label": "Horror"
+    },
+    "swimwear": {
+      "profile_key": "comfortable_with_swimwear",
+      "label": "Swimwear"
+    },
+    "kissing": {
+      "profile_key": "comfortable_with_kissing",
+      "label": "Kissing"
+    },
+    "pets_children": {
+      "profile_key": "comfortable_with_pets_children",
+      "label": "Pets or children"
+    }
+  },
+  "reviewer_downgrade_order": [
+    "auto_apply_draft",
+    "ready_for_review",
+    "needs_my_preference",
+    "reject"
+  ]
+}

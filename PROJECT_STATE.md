@@ -13,10 +13,11 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - CLI package `backstage-agent` / `python3 -m backstage_agent.cli` with commands for scanning, sample parsing, recent decisions, config display, dashboard serving, and persistent Backstage login checks.
 - IMAP email ingestion in `src/backstage_agent/email_client.py`, defaulting to recent Backstage-related messages and supporting `--days` or an exact `--date`.
 - Email digest parsing in `src/backstage_agent/parser.py` and optional Backstage project-page parsing in `src/backstage_agent/project_page_parser.py`.
-- Two-layer screening flow in `src/backstage_agent/agent.py`: project gate, strict project review, role screening, strict role review, then application draft/blocker recording.
-- Deterministic local screening checks plus configurable LLM providers through OpenAI-compatible clients.
-- SQLite persistence in `src/backstage_agent/storage.py` for projects, roles, decisions, reviews, applications, keys, shooting locations, and shooting dates.
-- Local dashboard in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765` for searching decisions and reviewing status details.
+- Two-layer screening flow in `src/backstage_agent/agent.py`: project gate, downgrade-only project review, role screening, downgrade-only role review, then application draft/blocker recording.
+- Deterministic local screening checks plus structured first-pass LLM screening and reviewer validation through OpenAI-compatible clients.
+- Five final decision buckets: `Auto Apply/Draft`, `Ready For Review`, `Needs My Preference`, `Reject`, and `Data/Parse Error`.
+- SQLite persistence in `src/backstage_agent/storage.py` for projects, roles, decisions, final buckets, structured classifier/reviewer artifacts, reviews, applications, keys, shooting locations, and shooting dates.
+- Local dashboard in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765` for searching decisions, final buckets, reviewer impact, and status details.
 - macOS notification helper in `src/backstage_agent/notifier.py` and daily launchd assets in `scripts/daily_scan.sh` and `launchd/com.sarahtxy.backstage-agent.daily.plist`.
 - Dry-run application drafting in `src/backstage_agent/application.py`, including guarded cover-note generation.
 
@@ -24,7 +25,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 
 - Parser and project-page extraction are being actively hardened against real Backstage digest/page variations.
 - The daily scan path is present and points at `/Users/sarahtxy/dev/backstage_agent`, but operational reliability still depends on local machine setup, credentials, virtualenv state, and launchd installation.
-- Dashboard review exists for decisions, but application draft management and correction feedback workflows are still limited.
+- Dashboard review exists for decisions and reviewer impact, but application draft management and correction feedback workflows are still limited.
 
 ## Known Issues
 
@@ -41,6 +42,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - Keep dry-run safety until the Backstage application flow is verified end to end.
 - Continue adding parser and page-parser regression tests for every real-world parsing bug.
 - Preserve the split between screening/review status and application blockers in storage, dashboard, and summaries.
+- Keep project-level screening before role-level screening; role application drafting only runs for role decisions that remain `Auto Apply/Draft` after reviewer validation.
 - Reuse captured actor profile/application facts instead of asking the user again for known facts.
 
 ## Important Constraints

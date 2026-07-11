@@ -3,12 +3,22 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, replace
 
+from .decision_core import (
+    DecisionBucket,
+    StructuredScreening,
+    resolve_final_bucket,
+    should_draft_bucket,
+)
 from .identifiers import role_key as build_role_key
 from .models import ActorProfile, CastingNotice, ProjectNotice, ScreeningDecision
 from .screener import _avoidance_concerns, _llm_client
 from .settings import Settings
 
 PROJECT_GATE_ROLE = "__project_gate__"
+PROJECT_SCREENING_ALLOWED_PREFERENCES = (
+    "Do not reject projects or roles because they require active Instagram tagging "
+    "when the actor profile has comfortable_with_active_instagram_tagging=true."
+)
 
 
 class ProjectScreener:
@@ -32,6 +42,7 @@ class ProjectScreener:
                     "Rejected because project LLM screening was unavailable: "
                     "no API key or call budget."
                 ],
+                final_bucket=DecisionBucket.READY_FOR_REVIEW.value,
             )
         return self._llm_screen(notice)
 
@@ -44,6 +55,7 @@ class ProjectScreener:
                 should_apply=False,
                 reasons=["Rejected by project-level actor profile avoidance rules."],
                 concerns=concerns,
+                final_bucket=DecisionBucket.REJECT.value,
             )
         if _is_senior_community_project(notice):
             return ScreeningDecision(
@@ -54,56 +66,100 @@ class ProjectScreener:
                     "Rejected locally: project is centered on an older/senior arts community, "
                     "which does not match the actor's current career-starting goals."
                 ],
+                final_bucket=DecisionBucket.REJECT.value,
             )
         return None
 
     def _llm_screen(self, notice: CastingNotice) -> ScreeningDecision:
         self._llm_calls += 1
-        response = self._client.chat.completions.create(
-            model=self.settings.llm_model,
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are the first-pass project-level screener for casting projects. "
-                        "Decide whether this project should proceed to role-level screening. "
-                        "Focus only on project-wide fit: project type, location, shoot dates, "
-                        "compensation, travel burden, and actor profile avoid terms. Reject "
-                        "concrete project-wide conflicts. Do not reject for role-specific "
-                        "gender, age, ethnicity, language, singing, wardrobe, or special-skill "
-                        "requirements unless they apply to the entire project. This is an "
-                        "optimistic first-pass selector; pass plausible projects so a stricter "
-                        "project reviewer can make the gate decision. Return compact JSON with "
-                        "score between 0 and 1, should_apply boolean, reasons array, and "
-                        "concerns array."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        {
-                            "actor_profile": asdict(self.profile),
-                            "project_notice": asdict(notice),
-                            "minimum_score": self.settings.min_match_score,
-                        },
-                        default=str,
-                    ),
-                },
-            ],
-        )
-        content = response.choices[0].message.content or "{}"
-        data = json.loads(content)
-        score = float(data.get("score", 0.0))
+        data, error = self._request_structured_screening(notice)
+        if data is None:
+            artifacts = resolve_final_bucket(schema_error=error)
+            return ScreeningDecision(
+                notice=notice,
+                score=0.0,
+                should_apply=False,
+                reasons=["Data/parse error from first-pass project LLM screening."],
+                concerns=[error] if error else [],
+                llm_used=True,
+                final_bucket=artifacts.final_bucket.value,
+                schema_error=artifacts.schema_error,
+            )
+        screening = StructuredScreening.from_json(data)
+        artifacts = resolve_final_bucket(screening=screening)
         return ScreeningDecision(
             notice=notice,
-            score=score,
-            should_apply=bool(data.get("should_apply", score >= self.settings.min_match_score)),
-            reasons=list(data.get("reasons", [])),
-            concerns=list(data.get("concerns", [])),
+            score=screening.confidence,
+            should_apply=should_draft_bucket(artifacts.final_bucket),
+            reasons=screening.fit_reasons,
+            concerns=screening.concerns,
             llm_used=True,
+            final_bucket=artifacts.final_bucket.value,
+            classifier_json=artifacts.classifier_json,
+            reviewer_impact=artifacts.reviewer_impact,
         )
+
+    def _request_structured_screening(self, notice: CastingNotice) -> tuple[dict | None, str]:
+        last_error = ""
+        for attempt in range(2):
+            prompt = _PROJECT_STRUCTURED_SCREENING_PROMPT
+            if attempt:
+                prompt = (
+                    "Repair the previous response. Return only valid JSON matching the "
+                    "structured screening schema. "
+                    f"Previous error: {last_error}"
+                )
+            response = self._client.chat.completions.create(
+                model=self.settings.llm_model,
+                temperature=0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {
+                        "role": "system",
+                        "content": prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "actor_profile": asdict(self.profile),
+                                "project_notice": asdict(notice),
+                                "minimum_score": self.settings.min_match_score,
+                            },
+                            default=str,
+                        ),
+                    },
+                ],
+            )
+            content = response.choices[0].message.content or "{}"
+            try:
+                data = json.loads(content)
+                StructuredScreening.from_json(data)
+                return data, ""
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = f"structured screening validation failed: {exc}"
+        return None, last_error
+
+
+_PROJECT_STRUCTURED_SCREENING_PROMPT = (
+    "You are the first-pass project-level screener for casting projects. "
+    "Decide whether this project should proceed to role-level screening. "
+    "Return only JSON with fields: suggested_bucket, role_type, project_type, "
+    "career_value_score, required_preferences, missing_preference_keys, "
+    "pay_burden, travel_burden, time_burden, fit_reasons, concerns, "
+    "evidence_snippets, confidence. suggested_bucket must be one of "
+    "auto_apply_draft, ready_for_review, needs_my_preference, reject, "
+    "data_parse_error. Focus only on project-wide fit: project type, location, "
+    "shoot dates, compensation, travel burden, and actor profile avoid terms. "
+    "Reject concrete project-wide conflicts. Do not reject for role-specific "
+    "gender, age, ethnicity, language, singing, wardrobe, or special-skill "
+    "requirements unless they apply to the entire project. "
+    f"{PROJECT_SCREENING_ALLOWED_PREFERENCES} "
+    "Use auto_apply_draft when the project should proceed to role screening now, "
+    "ready_for_review when the project is promising but should be eyeballed, "
+    "needs_my_preference for unknown reusable actor preferences, reject for "
+    "concrete conflicts, and data_parse_error only when too malformed to classify."
+)
 
 
 def project_to_notice(project: ProjectNotice) -> CastingNotice:

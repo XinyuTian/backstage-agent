@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .decision_core import DecisionBucket, label_for_bucket
 from .project_labels import extract_backstage_project_labels
 from .project_screener import PROJECT_GATE_ROLE
 from .settings import load_settings
@@ -249,6 +250,9 @@ def _list(items: list[str]) -> str:
 
 def _reviewer_detail(row) -> str:
     status = row["reviewer_status"]
+    final_bucket = _row_value(row, "final_bucket")
+    if final_bucket in {DecisionBucket.REJECT.value, DecisionBucket.DATA_PARSE_ERROR.value}:
+        return '<p class="muted">Not reviewed because first-pass screening did not pass it.</p>'
     if not row["should_apply"]:
         if _is_project_decision(row):
             return '<p class="muted">Not reviewed because project screening rejected it.</p>'
@@ -260,12 +264,18 @@ def _reviewer_detail(row) -> str:
     score = row["reviewer_score"]
     score_text = f" · score {float(score):.2f}" if score is not None else ""
     model_text = f" · {_esc(row['reviewer_model'])}" if row["reviewer_model"] else ""
+    impact = _row_value(row, "reviewer_impact") or "unknown"
+    bucket_text = f" · final bucket {_esc(label_for_bucket(final_bucket))}" if final_bucket else ""
     reasons_html = _list(reasons) if reasons else '<p class="muted">No reviewer reasons recorded.</p>'
     concerns_html = '<p class="muted">Reviewer concerns:</p>' + _list(concerns) if concerns else ""
+    structured = _structured_detail(row)
     return (
-        f'<p class="meta">Reviewer status: {_esc(status)}{score_text}{model_text}</p>'
+        f'<p class="meta">Reviewer status: {_esc(status)}{score_text}{model_text}'
+        f'{bucket_text}</p>'
+        f'<p class="meta">Reviewer impact: {_esc(impact)}</p>'
         f"{reasons_html}"
         f"{concerns_html}"
+        f"{structured}"
     )
 
 
@@ -309,6 +319,21 @@ def _project_label_chips(labels: list[str], class_name: str = "label-strip") -> 
 
 def _decision_status(row) -> tuple[str, str]:
     is_project = _is_project_decision(row)
+    final_bucket = _row_value(row, "final_bucket")
+    if final_bucket:
+        label = label_for_bucket(final_bucket)
+        if final_bucket == DecisionBucket.AUTO_APPLY_DRAFT.value:
+            if row["application_status"] == "submitted_backstage":
+                return "Submitted", "applied"
+            return ("Project " + label if is_project else label), "passed"
+        if final_bucket == DecisionBucket.READY_FOR_REVIEW.value:
+            return "Ready For Review", "hold"
+        if final_bucket == DecisionBucket.NEEDS_MY_PREFERENCE.value:
+            return "Needs My Preference", "hold"
+        if final_bucket == DecisionBucket.DATA_PARSE_ERROR.value:
+            return "Data/Parse Error", "hold"
+        if final_bucket == DecisionBucket.REJECT.value:
+            return ("Project Rejected" if is_project else "Rejected"), "reject"
     if row["should_apply"] and row["application_status"] == "submitted_backstage":
         return "Submitted", "applied"
     if is_project and row["should_apply"] and row["reviewer_status"] == "approved":
@@ -322,6 +347,33 @@ def _decision_status(row) -> tuple[str, str]:
     if is_project:
         return "Project Rejected", "reject"
     return "Rejected", "reject"
+
+
+def _structured_detail(row) -> str:
+    classifier = _row_value(row, "classifier_json")
+    reviewer = _row_value(row, "reviewer_json")
+    if not classifier and not reviewer:
+        return ""
+    parts = []
+    if classifier:
+        parts.append(f"<summary>Classifier JSON</summary><pre>{_esc(_pretty_json(classifier))}</pre>")
+    if reviewer:
+        parts.append(f"<summary>Reviewer JSON</summary><pre>{_esc(_pretty_json(reviewer))}</pre>")
+    return "".join(f"<details>{part}</details>" for part in parts)
+
+
+def _pretty_json(value: str) -> str:
+    try:
+        return json.dumps(json.loads(value), indent=2)
+    except (TypeError, json.JSONDecodeError):
+        return value
+
+
+def _row_value(row, key: str):
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return None
 
 
 def _is_project_decision(row) -> bool:

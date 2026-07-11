@@ -1,6 +1,7 @@
 from backstage_agent.models import CastingNotice, ProjectNotice, ReviewDecision, ScreeningDecision
 from backstage_agent.project_screener import project_to_notice
 from backstage_agent.storage import DecisionStore
+from backstage_agent.ui import _decision_status, _reviewer_detail
 
 
 def _notice(title: str) -> CastingNotice:
@@ -113,6 +114,43 @@ def test_approved_project_gate_is_hidden_but_unresolved_project_gates_show(tmp_p
     assert counts["passed_count"] == 0
     assert counts["needs_check_count"] == 1
     assert counts["reject_count"] == 1
+
+
+def test_store_persists_structured_decision_artifacts(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    decision = ScreeningDecision(
+        notice=_notice("Structured Role"),
+        score=0.91,
+        should_apply=True,
+        reasons=["Named scripted role"],
+        llm_used=True,
+        final_bucket="auto_apply_draft",
+        classifier_json={"role_type": "scripted_acting"},
+        reviewer_impact="not_reviewed",
+    )
+
+    decision_id = store.record_decision(decision)
+    store.record_review(
+        decision_id,
+        ReviewDecision(
+            notice=decision.notice,
+            status="hold",
+            score=0.8,
+            reasons=["Needs eyeballing"],
+            final_bucket="ready_for_review",
+            reviewer_json={"verdict": "downgrade"},
+            reviewer_impact="downgraded",
+        ),
+    )
+
+    row = store.search_decisions()[0]
+
+    assert row["final_bucket"] == "ready_for_review"
+    assert row["classifier_json"] == '{"role_type": "scripted_acting"}'
+    assert row["reviewer_json"] == '{"verdict": "downgrade"}'
+    assert row["reviewer_impact"] == "downgraded"
+    assert _decision_status(row)[0] == "Ready For Review"
+    assert "Reviewer impact: downgraded" in _reviewer_detail(row)
 
 
 def _project(title: str) -> ProjectNotice:

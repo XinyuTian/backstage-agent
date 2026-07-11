@@ -107,6 +107,22 @@ python3 -m backstage_agent.cli scan --days 1 --limit 25 --notify
 
 The script writes logs under `logs/` and sends a macOS notification on completion or failure.
 
+To rerun the daily job from scratch and overwrite the active SQLite database, first move the current database into `backups/`. The next scan will recreate `backstage_agent.sqlite3` and ignore prior saved decisions:
+
+```bash
+cd /Users/sarahtxy/dev/backstage_agent
+mkdir -p backups
+ts=$(date '+%Y%m%d-%H%M%S')
+mv backstage_agent.sqlite3 "backups/backstage_agent.sqlite3.${ts}.bak"
+.venv/bin/python -m backstage_agent.cli scan --days 1 --limit 25 --notify
+```
+
+For an exact calendar date instead of the rolling one-day window, replace the last command with:
+
+```bash
+.venv/bin/python -m backstage_agent.cli scan --date "$(date '+%Y-%m-%d')" --limit 25 --notify
+```
+
 ## Testing
 
 Run the full test suite:

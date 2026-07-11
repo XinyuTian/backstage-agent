@@ -14,11 +14,11 @@ The system is intentionally conservative: the default is dry-run application dra
 4. `DecisionStore` skips projects already seen by project key or title/date fallback.
 5. `ProjectPageClient` fetches project-page HTML through normal HTTP or an authenticated Playwright browser profile when enabled.
 6. `project_page_parser` extracts page context, shooting info, and role-level notices when page HTML is available.
-7. `ProjectScreener` performs local project rejects or LLM project screening.
-8. `DecisionReviewer.review_project()` performs stricter project review.
+7. `ProjectScreener` performs local project rejects or structured LLM project screening into a final bucket.
+8. `DecisionReviewer.review_project()` performs downgrade-only structured project review.
 9. Approved projects proceed to role-level screening through `RoleScreener`.
-10. Approved roles receive strict review through `DecisionReviewer.review()`.
-11. Approved reviews are passed to `ApplicationService`, which drafts or blocks application attempts.
+10. Auto-draft role buckets receive strict downgrade-only review through `DecisionReviewer.review()`.
+11. Roles that remain `Auto Apply/Draft` after review are passed to `ApplicationService`, which drafts or blocks application attempts.
 12. `DecisionStore` persists projects, roles, decisions, reviewer results, and application records.
 13. The CLI prints a JSON summary and optionally sends a macOS notification.
 
@@ -35,7 +35,8 @@ The system is intentionally conservative: the default is dry-run application dra
 - `browser_session.py`: Playwright persistent profile login, login checks, and authenticated HTML fetches.
 - `project_screener.py`: project-level local checks and first-pass project LLM screening.
 - `screener.py`: role-level local checks and first-pass role LLM screening.
-- `reviewer.py`: strict project and role reviewer LLM calls.
+- `decision_core.py`: five bucket constants, structured LLM/reviewer validation, rules loading, and deterministic bucket resolution.
+- `reviewer.py`: downgrade-only structured project and role reviewer LLM calls.
 - `application.py`: cover-note generation and dry-run/live-adapter guard behavior.
 - `storage.py`: SQLite schema creation, lightweight migrations, persistence, dashboard queries, and key backfills.
 - `ui.py`: local HTTP dashboard rendering and filtering.
@@ -54,7 +55,7 @@ See `docs/module-guide.md` for task-oriented reading guidance.
 
 ## Data Flow
 
-Email message -> project notices -> optional project page HTML -> project screening decision -> project review -> role notices -> role screening decision -> role review -> application draft/blocker -> SQLite rows -> CLI summary/dashboard.
+Email message -> project notices -> optional project page HTML -> project screening decision/bucket -> project review/bucket -> role notices -> role screening decision/bucket -> role review/bucket -> application draft/blocker -> SQLite rows -> CLI summary/dashboard.
 
 Project-level decisions are stored in the same `decisions` table as role-level decisions, using the sentinel role value from `PROJECT_GATE_ROLE`.
 
@@ -66,7 +67,7 @@ Main tables:
 
 - `projects`: parsed project notices, project keys, page-derived shooting info.
 - `roles`: role notices associated with projects.
-- `decisions`: project and role screening decisions, reviewer fields, serialized notice JSON, keys, shooting info.
+- `decisions`: project and role screening decisions, final buckets, structured classifier/reviewer JSON, reviewer impact, schema errors, serialized notice JSON, keys, shooting info.
 - `applications`: draft/submission/blocker records, cover notes, dry-run flag, blocker reason.
 
 Schema creation and lightweight migrations happen in `DecisionStore._ensure_schema()`. There is no separate migration framework.

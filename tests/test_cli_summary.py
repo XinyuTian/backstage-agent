@@ -88,3 +88,41 @@ def test_scan_summary_includes_project_layer_counts():
 
     assert "1 projects checked" in summary
     assert "0 project approved, 1 project need check, 0 project rejected" in summary
+
+
+def test_scan_summary_includes_final_bucket_counts():
+    auto = ScreeningDecision(
+        notice=_notice("Auto"),
+        score=0.9,
+        should_apply=True,
+        reasons=["fit"],
+        final_bucket="auto_apply_draft",
+    )
+    ready = ScreeningDecision(
+        notice=_notice("Ready"),
+        score=0.7,
+        should_apply=False,
+        reasons=["eyeball"],
+        final_bucket="ready_for_review",
+    )
+    preference = ScreeningDecision(
+        notice=_notice("Preference"),
+        score=0.6,
+        should_apply=False,
+        reasons=["ask"],
+        final_bucket="needs_my_preference",
+    )
+    result = ScanResult(
+        messages_seen=1,
+        projects_seen=1,
+        notices_seen=3,
+        project_decisions=[],
+        project_reviews=[],
+        decisions=[auto, ready, preference],
+        reviews=[],
+        applications=[],
+    )
+
+    summary = _scan_summary(result)
+
+    assert "Buckets: 1 Auto Apply/Draft, 1 Ready For Review, 1 Needs My Preference" in summary
