@@ -1,4 +1,10 @@
-from backstage_agent.models import CastingNotice, ProjectNotice, ReviewDecision, ScreeningDecision
+from backstage_agent.models import (
+    ApplicationDraft,
+    CastingNotice,
+    ProjectNotice,
+    ReviewDecision,
+    ScreeningDecision,
+)
 from backstage_agent.project_screener import project_to_notice
 from backstage_agent.storage import DecisionStore
 from backstage_agent.ui import _decision_status, _reviewer_detail
@@ -151,6 +157,42 @@ def test_store_persists_structured_decision_artifacts(tmp_path):
     assert row["reviewer_impact"] == "downgraded"
     assert _decision_status(row)[0] == "Ready For Review"
     assert "Reviewer impact: downgraded" in _reviewer_detail(row)
+
+
+def test_store_returns_latest_cover_note_for_dashboard(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    decision = ScreeningDecision(
+        notice=_notice("Cover Letter Role"),
+        score=0.91,
+        should_apply=True,
+        reasons=["Passed screening."],
+        final_bucket="auto_apply_draft",
+    )
+
+    decision_id = store.record_decision(decision)
+    store.record_application(
+        ApplicationDraft(
+            notice=decision.notice,
+            cover_note="Older cover letter",
+            dry_run=True,
+            status="drafted",
+        )
+    )
+    store.record_application(
+        ApplicationDraft(
+            notice=decision.notice,
+            cover_note="Latest cover letter",
+            dry_run=True,
+            status="drafted",
+        )
+    )
+
+    row = store.get_decision(decision_id)
+    rows = store.search_decisions()
+
+    assert row is not None
+    assert row["title"] == "Cover Letter Role"
+    assert rows[0]["cover_note"] == "Latest cover letter"
 
 
 def _project(title: str) -> ProjectNotice:

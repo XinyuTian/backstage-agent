@@ -234,6 +234,19 @@ class DecisionStore:
                 ),
             )
 
+    def get_decision(self, decision_id: int) -> sqlite3.Row | None:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return conn.execute(
+                f"""
+                SELECT
+                  {_DASHBOARD_DECISION_COLUMNS}
+                FROM decisions d
+                WHERE d.id = ?
+                """,
+                (decision_id,),
+            ).fetchone()
+
     def recent_decisions(self, limit: int = 20) -> list[sqlite3.Row]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -323,28 +336,7 @@ class DecisionStore:
                 conn.execute(
                     f"""
                     SELECT
-                      d.id, d.created_at, d.project_date, d.title, d.application_url,
-                      d.score, d.should_apply, d.reasons_json, d.concerns_json,
-                      d.llm_used, d.notice_json, d.project_key, d.role_key,
-                      d.shooting_locations, d.shooting_dates,
-                      d.reviewer_status, d.reviewer_score,
-                      d.reviewer_reasons_json, d.reviewer_concerns_json, d.reviewer_model,
-                      d.final_bucket, d.classifier_json, d.reviewer_json,
-                      d.reviewer_impact, d.schema_error,
-                      (
-                        SELECT a.status
-                        FROM applications a
-                        WHERE a.title = d.title
-                        ORDER BY a.id DESC
-                        LIMIT 1
-                      ) AS application_status,
-                      (
-                        SELECT a.blocker_reason
-                        FROM applications a
-                        WHERE a.title = d.title
-                        ORDER BY a.id DESC
-                        LIMIT 1
-                      ) AS application_blocker_reason
+                      {_DASHBOARD_DECISION_COLUMNS}
                     FROM decisions d
                     {where}
                     ORDER BY d.id DESC
@@ -674,6 +666,39 @@ def _json_or_none(value: dict | None) -> str | None:
     if value is None:
         return None
     return json.dumps(value, separators=(",", ": "))
+
+
+_DASHBOARD_DECISION_COLUMNS = """
+  d.id, d.created_at, d.project_date, d.title, d.application_url,
+  d.score, d.should_apply, d.reasons_json, d.concerns_json,
+  d.llm_used, d.notice_json, d.project_key, d.role_key,
+  d.shooting_locations, d.shooting_dates,
+  d.reviewer_status, d.reviewer_score,
+  d.reviewer_reasons_json, d.reviewer_concerns_json, d.reviewer_model,
+  d.final_bucket, d.classifier_json, d.reviewer_json,
+  d.reviewer_impact, d.schema_error,
+  (
+    SELECT a.status
+    FROM applications a
+    WHERE a.title = d.title
+    ORDER BY a.id DESC
+    LIMIT 1
+  ) AS application_status,
+  (
+    SELECT a.blocker_reason
+    FROM applications a
+    WHERE a.title = d.title
+    ORDER BY a.id DESC
+    LIMIT 1
+  ) AS application_blocker_reason,
+  (
+    SELECT a.cover_note
+    FROM applications a
+    WHERE a.title = d.title AND a.cover_note != ''
+    ORDER BY a.id DESC
+    LIMIT 1
+  ) AS cover_note
+"""
 
 
 def _decision_filter_sql(

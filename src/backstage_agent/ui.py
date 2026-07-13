@@ -6,10 +6,12 @@ from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .application import ApplicationService
 from .decision_core import DecisionBucket, label_for_bucket
+from .models import CastingNotice, ScreeningDecision
 from .project_labels import extract_backstage_project_labels
 from .project_screener import PROJECT_GATE_ROLE
-from .settings import load_settings
+from .settings import load_actor_profile, load_settings
 from .storage import DecisionStore
 
 
@@ -31,6 +33,33 @@ class DashboardServer:
                     self._send_html(_render_index(store, settings, parse_qs(parsed.query)))
                     return
                 self.send_error(404)
+
+            def do_POST(self) -> None:  # noqa: N802
+                parsed = urlparse(self.path)
+                if parsed.path == "/cover-letter":
+                    self._handle_cover_letter_post()
+                    return
+                self.send_error(404)
+
+            def _handle_cover_letter_post(self) -> None:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                params = parse_qs(self.rfile.read(length).decode("utf-8"))
+                try:
+                    decision_id = int(_param(params, "decision_id"))
+                except ValueError:
+                    self.send_error(400, "Missing decision id")
+                    return
+                row = store.get_decision(decision_id)
+                if row is None:
+                    self.send_error(404, "Decision not found")
+                    return
+                if _is_project_decision(row):
+                    self.send_error(400, "Cover letters are only available for roles")
+                    return
+                _generate_cover_letter_for_row(row, settings, store)
+                self.send_response(303)
+                self.send_header("Location", f"/?selected={decision_id}")
+                self.end_headers()
 
             def log_message(self, format: str, *args: object) -> None:
                 return
@@ -231,6 +260,8 @@ def _render_detail(row) -> str:
         {_field("Compensation", notice.get("compensation"))}
       </dl>
       <pre>{_esc(notice.get("description") or notice.get("raw_text") or "")}</pre>
+      {_cover_letter_detail(row)}
+      {_cover_letter_action(row)}
     """
 
 
@@ -246,6 +277,58 @@ def _link(url: str | None) -> str:
 
 def _list(items: list[str]) -> str:
     return "<ul>" + "".join(f"<li>{_esc(item)}</li>" for item in items) + "</ul>"
+
+
+def _cover_letter_detail(row) -> str:
+    cover_note = _row_value(row, "cover_note")
+    if not cover_note:
+        return ""
+    return f"<h3>Cover Letter</h3><pre>{_esc(cover_note)}</pre>"
+
+
+def _cover_letter_action(row) -> str:
+    if _is_project_decision(row):
+        return ""
+    return (
+        '<form class="detail-action" method="post" action="/cover-letter">'
+        f'<input type="hidden" name="decision_id" value="{_esc(row["id"])}">'
+        '<button type="submit">Generate Cover Letter</button>'
+        "</form>"
+    )
+
+
+def _generate_cover_letter_for_row(row, settings, store: DecisionStore) -> None:
+    profile = load_actor_profile(settings.actor_profile_path)
+    decision = _decision_from_row(row)
+    draft = ApplicationService(settings, profile).generate_cover_letter(decision)
+    store.record_application(draft)
+
+
+def _decision_from_row(row) -> ScreeningDecision:
+    notice_data = json.loads(row["notice_json"])
+    project_date = notice_data.get("project_date")
+    if isinstance(project_date, str):
+        try:
+            notice_data["project_date"] = date.fromisoformat(project_date)
+        except ValueError:
+            notice_data["project_date"] = None
+    notice_fields = CastingNotice.__dataclass_fields__
+    notice = CastingNotice(
+        **{key: notice_data.get(key) for key in notice_fields if key in notice_data}
+    )
+    return ScreeningDecision(
+        notice=notice,
+        score=float(row["score"]),
+        should_apply=bool(row["should_apply"]),
+        reasons=_json_list(row["reasons_json"]),
+        concerns=_json_list(row["concerns_json"]),
+        llm_used=bool(row["llm_used"]),
+        final_bucket=_row_value(row, "final_bucket"),
+        classifier_json=_json_dict(_row_value(row, "classifier_json")),
+        reviewer_json=_json_dict(_row_value(row, "reviewer_json")),
+        reviewer_impact=_row_value(row, "reviewer_impact") or "",
+        schema_error=_row_value(row, "schema_error") or "",
+    )
 
 
 def _reviewer_detail(row) -> str:
@@ -287,6 +370,16 @@ def _json_list(value: str | None) -> list[str]:
     except json.JSONDecodeError:
         return [value]
     return [str(item) for item in data]
+
+
+def _json_dict(value: str | None) -> dict | None:
+    if not value:
+        return None
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _project_labels_from_row(row) -> list[str]:
@@ -951,6 +1044,11 @@ pre {
   padding: 14px;
   background: #fbfcfd;
   line-height: 1.45;
+}
+.detail-action {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 20px;
 }
 .empty { padding: 24px; color: var(--muted); }
 @media (max-width: 860px) {

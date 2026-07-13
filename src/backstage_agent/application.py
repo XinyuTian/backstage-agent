@@ -46,6 +46,24 @@ class ApplicationService:
             blocker_reason=blocker_reason,
         )
 
+    def generate_cover_letter(self, decision: ScreeningDecision) -> ApplicationDraft:
+        try:
+            cover_note = self._cover_note(decision)
+        except RuntimeError as exc:
+            return ApplicationDraft(
+                notice=decision.notice,
+                cover_note="",
+                dry_run=self.dry_run,
+                status="blocked_cover_letter_llm_unavailable",
+                blocker_reason=str(exc),
+            )
+        return ApplicationDraft(
+            notice=decision.notice,
+            cover_note=cover_note,
+            dry_run=self.dry_run,
+            status="drafted",
+        )
+
     def failed_attempt(self, decision: ScreeningDecision, reason: str) -> ApplicationDraft:
         cover_note = ""
         if _requires_cover_letter(decision):

@@ -192,3 +192,34 @@ def test_cover_note_is_empty_when_cover_letter_not_required(tmp_path, monkeypatc
     assert draft.status == "drafted"
     assert draft.cover_note == ""
     assert fake_client.chat.completions.calls == 0
+
+
+def test_generate_cover_note_always_uses_llm_for_manual_dashboard_action(tmp_path, monkeypatch):
+    fake_client = FakeClient()
+    monkeypatch.setattr(
+        "backstage_agent.application._cover_letter_client",
+        lambda settings: fake_client,
+    )
+    notice = CastingNotice(
+        source_message_id="m1",
+        title="Commercial - Background Actor",
+        project="Commercial",
+        role="Background Actor",
+        location=None,
+        compensation="$100 flat rate",
+        description="Background actor, 25-40. No dialogue.",
+        application_url="https://example.com",
+        raw_text="Commercial\nBackground Actor\nBackground actor, 25-40. No dialogue.",
+    )
+    decision = ScreeningDecision(
+        notice=notice,
+        score=0.85,
+        should_apply=True,
+        reasons=["Age range overlaps."],
+    )
+
+    draft = ApplicationService(_settings(tmp_path), _profile()).generate_cover_letter(decision)
+
+    assert draft.status == "drafted"
+    assert draft.cover_note.startswith("Dear Casting Team,")
+    assert fake_client.chat.completions.calls == 1

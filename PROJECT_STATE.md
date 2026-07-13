@@ -17,7 +17,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - Deterministic local screening checks plus structured first-pass LLM screening and reviewer validation through OpenAI-compatible clients.
 - Five final decision buckets: `Auto Apply/Draft`, `Ready For Review`, `Needs My Preference`, `Reject`, and `Data/Parse Error`.
 - SQLite persistence in `src/backstage_agent/storage.py` for projects, roles, decisions, final buckets, structured classifier/reviewer artifacts, reviews, applications, keys, shooting locations, and shooting dates.
-- Local dashboard in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765` for searching decisions, final buckets, reviewer impact, and status details.
+- Local dashboard in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765` for searching decisions, final buckets, reviewer impact, status details, and on-demand role cover-letter drafts.
 - macOS notification helper in `src/backstage_agent/notifier.py` and daily launchd assets in `scripts/daily_scan.sh` and `launchd/com.sarahtxy.backstage-agent.daily.plist`.
 - Dry-run application drafting in `src/backstage_agent/application.py`, including guarded cover-note generation.
 
@@ -25,7 +25,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 
 - Parser and project-page extraction are being actively hardened against real Backstage digest/page variations.
 - The daily scan path is present and points at `/Users/sarahtxy/dev/backstage_agent`, but operational reliability still depends on local machine setup, credentials, virtualenv state, and launchd installation.
-- Dashboard review exists for decisions and reviewer impact, but application draft management and correction feedback workflows are still limited.
+- Dashboard review exists for decisions, reviewer impact, and on-demand role cover-letter drafts, but broader application draft management and correction feedback workflows are still limited.
 
 ## Known Issues
 

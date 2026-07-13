@@ -9,6 +9,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 - Introduced lightweight repository documentation for future coding agents, including project state, architecture, module guide, and agent workflow instructions.
 - Added a role-selection decision core with five final buckets, structured first-pass LLM output validation, downgrade-only reviewer validation, reusable `screening_rules.json`, and tests.
 - Persisted structured classifier/reviewer artifacts, final bucket, reviewer impact, and schema errors on decision rows.
+- Added an on-demand dashboard cover-letter button at the bottom of role detail panels, using the existing profile-grounded draft generation prompt and displaying the latest generated draft.
 
 ### Changed
 
