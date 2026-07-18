@@ -24,8 +24,9 @@ Build a conservative local automation agent that scans daily Backstage casting e
 ## In Progress
 
 - Parser and project-page extraction are being actively hardened against real Backstage digest/page variations.
-- The daily scan path is present and points at `/Users/sarahtxy/dev/backstage_agent`, but operational reliability still depends on local machine setup, credentials, virtualenv state, and launchd installation.
+- The daily scan path is present and points at `/Users/sarahtxy/dev/backstage_agent`, with launchd retries at 9:00–12:00 when no Backstage email has arrived yet; operational reliability still depends on local machine setup, credentials, virtualenv state, and launchd installation.
 - Dashboard review exists for decisions, reviewer impact, and on-demand role cover-letter drafts, but broader application draft management and correction feedback workflows are still limited.
+
 
 ## Known Issues
 
@@ -38,7 +39,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 
 ## Current Priorities
 
-- Keep the default daily scan to a one-day window with macOS notification.
+- Keep the default daily scan to a one-day window with macOS notification; retry hourly at 9–12 when `messages_seen == 0`.
 - Keep dry-run safety until the Backstage application flow is verified end to end.
 - Continue adding parser and page-parser regression tests for every real-world parsing bug.
 - Preserve the split between screening/review status and application blockers in storage, dashboard, and summaries.

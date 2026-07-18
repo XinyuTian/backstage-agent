@@ -99,13 +99,31 @@ If Backstage or Cloudflare blocks the automated browser, the agent should stop a
 
 ## Daily Automation
 
-The daily local run is defined in `scripts/daily_scan.sh` and scheduled by `launchd/com.sarahtxy.backstage-agent.daily.plist`. The intended command shape is:
+The daily local run is defined in `scripts/daily_scan.sh` and scheduled by `launchd/com.sarahtxy.backstage-agent.daily.plist`. launchd runs the script at **9:00, 10:00, 11:00, and 12:00** local time.
+
+The script runs selection only (no candidate scoring). It invokes:
 
 ```bash
-python3 -m backstage_agent.cli scan --days 1 --limit 25 --notify
+python3 -m backstage_agent.cli scan --days 1 --limit 25
 ```
 
-The script writes logs under `logs/` and sends a macOS notification on completion or failure.
+The scan command no longer passes `--notify`; the shell sends macOS notifications after inspecting the JSON result.
+
+Retry behavior:
+
+- If `messages_seen == 0` before noon, the job exits quietly and retries at the next hour.
+- If the inbox is still empty at the noon attempt, the user is notified once (“No Backstage email today”) and later hours no-op for that date.
+- After a successful scan for the day, later hourly runs skip quietly.
+
+State is tracked in `logs/daily-scan-state.json`. Logs go to `logs/daily-scan.out.log` and `logs/daily-scan.err.log`.
+
+After changing the launchd plist, reload the job:
+
+```bash
+launchctl bootout gui/$(id -u)/com.sarahtxy.backstage-agent.daily 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) "$PWD/launchd/com.sarahtxy.backstage-agent.daily.plist"
+```
+
 
 To rerun the daily job from scratch and overwrite the active SQLite database, first move the current database into `backups/`. The next scan will recreate `backstage_agent.sqlite3` and ignore prior saved decisions:
 

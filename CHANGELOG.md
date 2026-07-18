@@ -13,6 +13,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Changed
 
+- Daily automation retries the selection scan at 9:00, 10:00, 11:00, and 12:00 when no Backstage email is seen yet; the shell notifies on success or after the final noon miss, tracks per-day state in `logs/daily-scan-state.json`, and no longer passes `--notify` to the scan CLI.
 - Refreshed README structure so setup, configuration, commands, daily automation, testing, and project status are easier to scan.
 - Recorded active Instagram tagging as an allowed actor preference and instructed project/role screeners not to reject roles for that requirement.
 - Updated scan orchestration so projects are screened and reviewed before roles, role reviews receive the first model bucket/artifacts, and application drafting only runs for roles that remain `Auto Apply/Draft` after reviewer validation.

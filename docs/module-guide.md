@@ -5,7 +5,7 @@ Use this guide to choose the smallest set of files to read for a task.
 ## CLI And Daily Operation
 
 - Start with `src/backstage_agent/cli.py` for command behavior, scan summary JSON, notification triggering, dashboard startup, and login commands.
-- Read `scripts/daily_scan.sh` and `launchd/com.sarahtxy.backstage-agent.daily.plist` for the daily 9am local run.
+- Read `scripts/daily_scan.sh` and `launchd/com.sarahtxy.backstage-agent.daily.plist` for the daily run (9/10/11/12 local hours; retries when no email until noon give-up).
 - Relevant tests: `tests/test_cli_summary.py`, plus module-specific tests for changed behavior.
 
 ## Configuration And Profile Data
