@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import date
 
@@ -14,6 +15,44 @@ from backstage_agent.candidate_models import (
 )
 from backstage_agent.models import ProjectNotice
 from backstage_agent.storage import DecisionStore
+
+
+def test_legacy_rows_are_preserved_without_runtime_access(tmp_path):
+    database_path = tmp_path / "db.sqlite3"
+    store = DecisionStore(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO decisions (
+              source_message_id, title, score, should_apply, reasons_json,
+              concerns_json, llm_used, notice_json
+            )
+            VALUES ('legacy-message', 'Legacy Decision', 0.5, 0, '[]', '[]', 0, '{}')
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO applications (title, cover_note, dry_run, status)
+            VALUES ('Legacy Decision', 'Old draft', 1, 'drafted')
+            """
+        )
+
+    store = DecisionStore(database_path)
+
+    for name in (
+        "record_decision",
+        "record_review",
+        "record_application",
+        "recent_decisions",
+        "get_decision",
+        "search_decisions",
+        "decision_counts",
+        "screening_counts",
+    ):
+        assert not hasattr(store, name)
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM applications").fetchone()[0] == 1
 
 
 def _features():

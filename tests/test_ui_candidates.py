@@ -1,4 +1,9 @@
-from backstage_agent.ui import _record_candidate_feedback_from_params, _render_candidates_index
+from backstage_agent.ui import (
+    _get_route,
+    _post_route,
+    _record_candidate_feedback_from_params,
+    _render_candidates_index,
+)
 
 
 class FakeStore:
@@ -23,6 +28,13 @@ class FakeStore:
                 "requirement_match_json": "[]",
             }
         ]
+
+
+def test_candidate_routes_exclude_legacy_dashboard_actions():
+    assert _get_route("/") == ("redirect", "/candidates")
+    assert _get_route("/candidates") == ("candidates", None)
+    assert _post_route("/candidate-feedback") == "candidate_feedback"
+    assert _post_route("/cover-letter") is None
 
 
 def test_render_candidates_index_shows_ranked_score_and_feedback_form():

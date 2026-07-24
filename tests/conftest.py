@@ -61,7 +61,6 @@ def actor_profile_factory():
 
     return build
 
-
 @pytest.fixture
 def settings_factory(tmp_path):
     def build(**overrides):
@@ -76,10 +75,8 @@ def settings_factory(tmp_path):
             "openai_api_key": "unused",
             "llm_model": "deepseek-v4-pro",
             "max_llm_calls_per_scan": 2,
-            "min_match_score": 0.72,
             "actor_profile_path": tmp_path / "profile.json",
             "database_path": tmp_path / "db.sqlite3",
-            "dry_run": True,
         }
         data.update(overrides)
         return Settings(**data)
@@ -103,46 +100,5 @@ def casting_notice_factory():
         }
         data.update(overrides)
         return CastingNotice(**data)
-
-    return build
-
-
-@pytest.fixture
-def structured_screening_payload_factory():
-    def build(**overrides):
-        payload = {
-            "suggested_bucket": "auto_apply_draft",
-            "role_type": "scripted_acting",
-            "project_type": "theater",
-            "career_value_score": 5,
-            "required_preferences": [],
-            "missing_preference_keys": [],
-            "pay_burden": "low",
-            "travel_burden": "low",
-            "time_burden": "medium",
-            "fit_reasons": ["Named scripted role"],
-            "concerns": [],
-            "evidence_snippets": ["Lead, Female, 30-50"],
-            "confidence": 0.91,
-        }
-        payload.update(overrides)
-        return payload
-
-    return build
-
-
-@pytest.fixture
-def structured_review_payload_factory():
-    def build(**overrides):
-        payload = {
-            "verdict": "confirm",
-            "downgrade_to": None,
-            "evidence_snippets": [],
-            "reasons": ["Clear fit"],
-            "concerns": [],
-            "confidence": 0.9,
-        }
-        payload.update(overrides)
-        return payload
 
     return build

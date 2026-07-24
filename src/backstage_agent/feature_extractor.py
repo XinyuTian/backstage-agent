@@ -3,13 +3,28 @@ from __future__ import annotations
 import json
 import re
 
+from openai import OpenAI
+
 from .candidate_models import CandidateFeatures, CandidateInput
 from .models import ActorProfile
-from .screener import _llm_client
 from .settings import Settings
 
 
 DISALLOWED_SCORE_FIELDS = {"overall_score", "score_band", "should_apply", "draft_suggestion"}
+
+
+def _llm_client(settings: Settings) -> OpenAI | None:
+    provider = settings.llm_provider.strip().lower()
+    if provider == "openai":
+        return OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+    if provider in {"ai_builder", "aibuilder"}:
+        if not settings.ai_builder_api_key:
+            return None
+        return OpenAI(
+            api_key=settings.ai_builder_api_key,
+            base_url=settings.ai_builder_base_url,
+        )
+    raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
 
 
 class FeatureExtractor:

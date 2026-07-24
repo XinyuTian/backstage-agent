@@ -33,7 +33,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Removed
 
-- Nothing yet.
+- Removed the legacy project/role screening, reviewer, application-drafting, decision CLI, decision dashboard, cover-letter route, and their runtime storage interfaces. Existing legacy SQLite rows are retained but no longer accessed.
 
 ## Recent History From Git
 

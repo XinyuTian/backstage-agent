@@ -20,8 +20,6 @@
     "mandatory_requirement_not_met": 15,
     "hard_personal_boundary": 10,
     "expired_or_unavailable": 20,
-    "project_gate_rejected": 35,
-    "project_review_blocked": 60,
     "missing_critical_data": 60
   },
   "draft_suggestion_min_score": 90,

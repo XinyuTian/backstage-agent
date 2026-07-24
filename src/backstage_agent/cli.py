@@ -10,16 +10,14 @@ from .agent import BackstageAgent
 from .browser_session import BrowserSessionError, check_backstage_login, open_backstage_login
 from .calibration import build_calibration_proposals
 from .candidate_models import HumanFeedback
-from .decision_core import DecisionBucket, label_for_bucket
 from .models import EmailMessage
 from .notifier import send_mac_notification
 from .parser import parse_casting_notices
 from .settings import load_actor_profile, load_settings
 from .storage import DecisionStore
-from .ui import DashboardServer
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="backstage-agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -31,9 +29,6 @@ def main() -> None:
 
     sample_parser = subparsers.add_parser("parse-sample", help="Parse a saved email text/html file")
     sample_parser.add_argument("path", type=Path)
-
-    decisions_parser = subparsers.add_parser("decisions", help="Show recent screening decisions")
-    decisions_parser.add_argument("--limit", type=int, default=20)
 
     candidates_parser = subparsers.add_parser("candidates", help="Show ranked scored candidates")
     candidates_parser.add_argument("--limit", type=int, default=50)
@@ -77,17 +72,19 @@ def main() -> None:
         help="Check whether the persistent Backstage browser profile is logged in",
     )
 
-    ui_parser = subparsers.add_parser("ui", help="Run a local decision search UI")
+    ui_parser = subparsers.add_parser("ui", help="Run the local candidate UI")
     ui_parser.add_argument("--host", default="127.0.0.1")
     ui_parser.add_argument("--port", type=int, default=8765)
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     if args.command == "scan":
         _scan(args.limit, args.days, args.date, args.notify)
     elif args.command == "parse-sample":
         _parse_sample(args.path)
-    elif args.command == "decisions":
-        _decisions(args.limit)
     elif args.command == "candidates":
         _candidates(args.limit, args.band, args.q)
     elif args.command == "candidate-feedback":
@@ -112,6 +109,8 @@ def main() -> None:
     elif args.command == "backstage-login-check":
         _backstage_login_check()
     elif args.command == "ui":
+        from .ui import DashboardServer
+
         DashboardServer(host=args.host, port=args.port).serve_forever()
 
 
@@ -131,17 +130,11 @@ def _scan(
                 "messages_seen": result.messages_seen,
                 "projects_seen": result.projects_seen,
                 "notices_seen": result.notices_seen,
-                "project_decisions": len(result.project_decisions),
-                "project_reviews": len(result.project_reviews),
-                "decisions": len(result.decisions),
-                "reviews": len(result.reviews),
-                "applications": len(result.applications),
                 "candidates_scored": result.candidates_scored,
                 "candidates_skipped_existing": result.candidates_skipped_existing,
                 "draft_suggestions": result.draft_suggestions,
                 "days": days,
                 "date": target_date.isoformat() if target_date else None,
-                "dry_run": settings.dry_run,
                 "summary": summary,
             },
             indent=2,
@@ -162,45 +155,6 @@ def _scan_summary(result) -> str:
     )
 
 
-def _bucket_summary(result) -> str:
-    counts = {bucket.value: 0 for bucket in DecisionBucket}
-    for decision in [*result.project_decisions, *result.decisions]:
-        if decision.final_bucket in counts:
-            counts[decision.final_bucket] += 1
-    parts = [
-        f"{count} {label_for_bucket(bucket)}"
-        for bucket, count in counts.items()
-        if count
-    ]
-    return "Buckets: " + ", ".join(parts) + "." if parts else ""
-
-
-def _budget_warnings(result) -> str:
-    project_screening_exhausted = sum(
-        1
-        for decision in result.project_decisions
-        if any("project llm screening was unavailable" in reason.lower() for reason in decision.reasons)
-    )
-    first_pass_exhausted = sum(
-        1
-        for decision in result.decisions
-        if any("first-pass llm screening was unavailable" in reason.lower() for reason in decision.reasons)
-    )
-    reviewer_exhausted = sum(
-        1
-        for review in [*result.project_reviews, *result.reviews]
-        if any("reviewer call budget was exhausted" in reason.lower() for reason in review.reasons)
-    )
-    warnings = []
-    if project_screening_exhausted:
-        warnings.append(f"{project_screening_exhausted} project-screening budget exhausted")
-    if first_pass_exhausted:
-        warnings.append(f"{first_pass_exhausted} role-screening budget exhausted")
-    if reviewer_exhausted:
-        warnings.append(f"{reviewer_exhausted} reviewer budget exhausted")
-    return "Budget warning: " + ", ".join(warnings) + "." if warnings else ""
-
-
 def _parse_sample(path: Path) -> None:
     content = path.read_text(encoding="utf-8")
     message = EmailMessage(
@@ -213,28 +167,6 @@ def _parse_sample(path: Path) -> None:
     )
     notices = parse_casting_notices(message)
     print(json.dumps([notice.__dict__ for notice in notices], indent=2))
-
-
-def _decisions(limit: int) -> None:
-    settings = load_settings()
-    store = DecisionStore(settings.database_path)
-    rows = store.recent_decisions(limit=limit)
-    print(
-        json.dumps(
-            [
-                {
-                    "created_at": row["created_at"],
-                    "title": row["title"],
-                    "score": row["score"],
-                    "should_apply": bool(row["should_apply"]),
-                    "llm_used": bool(row["llm_used"]),
-                    "reasons": json.loads(row["reasons_json"]),
-                }
-                for row in rows
-            ],
-            indent=2,
-        )
-    )
 
 
 def _candidates(limit: int, band: str, query: str) -> None:
@@ -363,13 +295,8 @@ def _show_config() -> None:
                 "llm_provider": settings.llm_provider,
                 "llm_model": settings.llm_model,
                 "max_llm_calls_per_scan": settings.max_llm_calls_per_scan,
-                "reviewer_provider": settings.reviewer_provider,
-                "reviewer_model": settings.reviewer_model,
-                "max_reviewer_calls_per_scan": settings.max_reviewer_calls_per_scan,
-                "min_match_score": settings.min_match_score,
                 "actor_profile": profile.name,
                 "database_path": str(settings.database_path),
-                "dry_run": settings.dry_run,
                 "browser_profile_path": str(settings.browser_profile_path),
                 "use_browser_for_backstage": settings.use_browser_for_backstage,
                 "backstage_browser_headless": settings.backstage_browser_headless,

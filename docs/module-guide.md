@@ -21,15 +21,6 @@ Use this guide to choose the smallest set of files to read for a task.
 - Use `src/backstage_agent/project_page_parser.py` when project-page HTML, embedded JSON, shooting dates, locations, or page-derived roles are involved.
 - Relevant tests: `tests/test_email_client.py`, `tests/test_parser.py`, `tests/test_project_page_parser.py`.
 
-## Screening And Review
-
-- The default `scan` path does not invoke screening or review. These modules remain legacy compatibility code pending the separately approved removal step.
-- Use `src/backstage_agent/decision_core.py` for the five final buckets, structured model validation, reviewer downgrade policy, and reusable screening rules.
-- Use `src/backstage_agent/project_screener.py` for project-level local checks and first-pass project LLM screening.
-- Use `src/backstage_agent/screener.py` for role-level local checks and first-pass role LLM screening.
-- Use `src/backstage_agent/reviewer.py` for downgrade-only reviewer behavior and reviewer provider calls.
-- Relevant tests: `tests/test_decision_core.py`, `tests/test_structured_screening.py`, `tests/test_structured_reviewer.py`, `tests/test_agent_review_gate.py`, `tests/test_project_screener.py`, `tests/test_screener.py`.
-
 ## Candidate Scoring
 
 - Start with `src/backstage_agent/agent.py` for the scoring-first daily `scan` orchestration and the shared exact-date scoring service.
@@ -42,17 +33,11 @@ Use this guide to choose the smallest set of files to read for a task.
 - Use `src/backstage_agent/calibration.py` for turning repeated feedback patterns into scoring-rule proposals.
 - Relevant tests: `tests/test_candidate_models.py`, `tests/test_candidate_generation.py`, `tests/test_feature_extractor.py`, `tests/test_requirement_matcher.py`, `tests/test_candidate_scoring.py`, `tests/test_agent_candidate_scoring.py`, `tests/test_candidate_storage.py`, `tests/test_cli_candidates.py`, `tests/test_ui_candidates.py`, and `tests/test_calibration.py`.
 
-## Application Drafting
-
-- Start with `src/backstage_agent/application.py` for cover-note generation and dry-run/live-adapter guard behavior.
-- Live Backstage submission is not implemented; `DRY_RUN=false` currently records `blocked_no_live_adapter`.
-- Relevant tests: `tests/test_application.py`.
-
 ## Storage And Dashboard
 
 - Start with `src/backstage_agent/storage.py` for SQLite schema, persistence, search filters, status counts, and lightweight migrations.
 - Use `src/backstage_agent/ui.py` for dashboard rendering, filters, status labels, candidate rankings, candidate feedback form affordances, and application blocker display.
-- Keep screening/review status distinct from application blocker state. Structured rows include final bucket, classifier JSON, reviewer JSON, reviewer impact, and schema errors.
+- Existing legacy decision/application rows are inert and have no runtime readers or writers.
 - Candidate rows include score JSON, feature JSON, requirement-match JSON, ranked band, rank position, and draft-suggestion fields.
 - Relevant tests: `tests/test_storage_dashboard.py`, `tests/test_candidate_storage.py`, `tests/test_ui_labels.py`, `tests/test_ui_candidates.py`.
 

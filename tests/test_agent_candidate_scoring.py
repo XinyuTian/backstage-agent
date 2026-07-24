@@ -1,7 +1,6 @@
 from backstage_agent.agent import BackstageAgent
 from backstage_agent.candidate_models import CandidateFeatures, CandidateScore, ScoreBand
-from backstage_agent.models import EmailMessage, ProjectNotice, ReviewDecision, ScreeningDecision
-from backstage_agent.project_screener import project_to_notice
+from backstage_agent.models import EmailMessage, ProjectNotice
 from datetime import date
 import json
 
@@ -34,29 +33,6 @@ class FailingFeatureExtractor:
         raise RuntimeError(f"boom for {candidate.title}")
 
 
-class FakeProjectScreener:
-    def screen(self, notice):
-        return ScreeningDecision(
-            notice=project_to_notice(notice),
-            score=0.9,
-            should_apply=True,
-            reasons=["project ok"],
-            final_bucket="auto_apply_draft",
-            classifier_json={"project_type": "theater"},
-        )
-
-
-class FakeReviewer:
-    def review_project(self, notice, initial_bucket=None, classifier_json=None):
-        return ReviewDecision(
-            notice=notice,
-            status="approved",
-            score=0.9,
-            reasons=["approved"],
-            final_bucket=initial_bucket,
-        )
-
-
 def test_daily_scan_scores_project_only_candidate_when_roles_missing(monkeypatch, settings_factory, tmp_path):
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
@@ -86,8 +62,6 @@ def test_daily_scan_scores_project_only_candidate_when_roles_missing(monkeypatch
     agent = BackstageAgent(settings)
     agent.email_client = FakeEmailClient()
     agent.project_pages = FakeProjectPages()
-    agent.project_screener = FakeProjectScreener()
-    agent.reviewer = FakeReviewer()
     agent.feature_extractor = FakeFeatureExtractor()
 
     result = agent.scan(limit=1, target_date=date(2026, 7, 15))
@@ -134,8 +108,6 @@ def test_daily_scan_persists_auditable_fallback_when_scoring_step_fails(
     agent = BackstageAgent(settings)
     agent.email_client = FakeEmailClient()
     agent.project_pages = FakeProjectPages()
-    agent.project_screener = FakeProjectScreener()
-    agent.reviewer = FakeReviewer()
     agent.feature_extractor = FailingFeatureExtractor()
 
     result = agent.scan(limit=1, target_date=date(2026, 7, 15))
@@ -200,17 +172,7 @@ def test_daily_scan_keeps_scores_attached_to_original_role_after_ranking(
     agent.email_client = FakeEmailClient()
     agent.project_pages = FakeProjectPages()
     agent.project_pages.fetch_html = lambda url: "<html></html>"
-    agent.project_screener = FakeProjectScreener()
-    agent.reviewer = FakeReviewer()
-    agent.reviewer.review_project = lambda notice, initial_bucket=None, classifier_json=None: ReviewDecision(
-        notice=notice,
-        status="hold",
-        score=0.3,
-        reasons=["project review"],
-        final_bucket="ready_for_review",
-    )
-
-    def fake_score(candidate, project_decision=None, project_review=None):
+    def fake_score(candidate):
         overall_score = 61 if candidate.role_key == "role-low-score" else 94
         return (
             CandidateFeatures(
@@ -316,17 +278,7 @@ def test_manual_scoring_ranks_candidates_globally_across_projects(
     agent.email_client = FakeEmailClient()
     agent.project_pages = FakeProjectPages()
     agent.project_pages.fetch_html = lambda url: "<html></html>"
-    agent.project_screener = FakeProjectScreener()
-    agent.reviewer = FakeReviewer()
-    agent.reviewer.review_project = lambda notice, initial_bucket=None, classifier_json=None: ReviewDecision(
-        notice=notice,
-        status="hold",
-        score=0.3,
-        reasons=["project review"],
-        final_bucket="ready_for_review",
-    )
-
-    def fake_score(candidate, project_decision=None, project_review=None):
+    def fake_score(candidate):
         overall_score = 50 if candidate.role_key == "lower-role" else 95
         return (
             CandidateFeatures(
@@ -394,8 +346,6 @@ def test_manual_scoring_skips_existing_by_default_and_overwrites_explicitly(
     agent = BackstageAgent(settings)
     agent.email_client = FakeEmailClient()
     agent.project_pages = FakeProjectPages()
-    agent.project_screener = FakeProjectScreener()
-    agent.reviewer = FakeReviewer()
     agent.feature_extractor = FakeFeatureExtractor()
     first = agent.scan(limit=1, target_date=date(2026, 7, 15))
     safe_repeat = agent.score_candidates_for_date(date(2026, 7, 15))

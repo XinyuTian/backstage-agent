@@ -38,8 +38,6 @@ def _rules():
             "hard_personal_boundary": 10,
             "expired_or_unavailable": 20,
             "missing_critical_data": 60,
-            "project_gate_rejected": 35,
-            "project_review_blocked": 60,
         },
         "draft_suggestion_min_score": 90,
         "rank_adjustment_cap": 5,
@@ -95,25 +93,6 @@ def test_missing_critical_data_caps_score_at_sixty():
 
     assert score.overall_score <= 60
     assert "missing_critical_data" in score.score_caps
-
-
-def test_project_gate_rejection_caps_candidate_score():
-    features = _features(project_signals={"project_gate_rejected": True})
-
-    score = score_candidate(features, [], _rules())
-
-    assert score.overall_score == 35
-    assert "project_gate_rejected" in score.score_caps
-    assert "Project gate rejected this opportunity" in score.negative_drivers
-
-
-def test_project_review_blocked_caps_candidate_score():
-    features = _features(project_signals={"project_review_blocked": True})
-
-    score = score_candidate(features, [], _rules())
-
-    assert score.overall_score <= 60
-    assert "project_review_blocked" in score.score_caps
 
 
 def test_optional_only_requirements_add_partial_credit_without_maxing_component():

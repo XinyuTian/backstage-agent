@@ -4,7 +4,7 @@
 
 Backstage Agent is a CLI-first Python package under `src/backstage_agent`. Its daily path fetches Backstage casting notification emails, refreshes project and role data, and scores mutual-selection candidates against local actor facts and project signals. The same scoring service remains available through a manual exact-date command.
 
-The system is intentionally conservative: the default is dry-run application drafting, not live submission.
+The system is scoring-only and does not draft or submit applications.
 
 ## Main Workflow
 
@@ -19,7 +19,7 @@ The system is intentionally conservative: the default is dry-run application dra
 9. `DecisionStore` preserves existing candidate identities by default and persists new score artifacts.
 10. The CLI prints a scoring-oriented JSON summary and optionally sends a macOS notification.
 
-The default scan does not invoke legacy project screening, role screening, reviewer calls, or application drafting. Those modules, historical tables, storage interfaces, and dashboard views remain compatibility code pending a separately approved removal step.
+Legacy screening, review, application drafting, decision CLI, and decision dashboard modules have been removed.
 
 Manual `score-candidates --date YYYY-MM-DD` runs the same stored-date scoring service. Existing scores are preserved unless `--overwrite` is supplied.
 
@@ -27,26 +27,22 @@ Manual `score-candidates --date YYYY-MM-DD` runs the same stored-date scoring se
 
 - `cli.py`: command-line entry point and scan summary formatting.
 - `settings.py`: `.env` loading, environment parsing, and actor profile loading.
-- `models.py`: dataclasses shared across parsing, screening, review, storage, and application drafting.
+- `models.py`: actor profile, email, project, and role dataclasses.
 - `agent.py`: high-level scan orchestration.
 - `email_client.py`: IMAP search, fetch, date-window filtering, MIME decoding.
 - `parser.py`: email digest and fallback casting notice parsing.
 - `project_page_parser.py`: Backstage project-page role, shooting location, and shooting date extraction.
 - `web_client.py`: unauthenticated HTTP project-page fetches and browser-backed authenticated fetch dispatch.
 - `browser_session.py`: Playwright persistent profile login, login checks, and authenticated HTML fetches.
-- `project_screener.py`: project-level local checks and first-pass project LLM screening.
-- `screener.py`: role-level local checks and first-pass role LLM screening.
-- `decision_core.py`: five bucket constants, structured LLM/reviewer validation, rules loading, and deterministic bucket resolution.
+- `project_context.py`: project description enrichment from page and role data.
 - `candidate_models.py`: candidate, feature, requirement match, score, feedback, and calibration data structures.
 - `candidate_generation.py`: role and project-only candidate generation from parsed projects and roles.
 - `feature_extractor.py`: structured LLM feature extraction that does not produce scores or decisions.
 - `requirement_matcher.py`: local requirement matching against stored actor facts.
 - `scoring.py`: deterministic score, cap, band, trace, draft-suggestion, and ranking logic.
 - `calibration.py`: proposal generation from repeated human feedback taxonomy patterns.
-- `reviewer.py`: downgrade-only structured project and role reviewer LLM calls.
-- `application.py`: cover-note generation and dry-run/live-adapter guard behavior.
-- `storage.py`: SQLite schema creation, lightweight migrations, persistence, dashboard queries, and key backfills.
-- `ui.py`: local HTTP dashboard rendering and filtering.
+- `storage.py`: SQLite schema compatibility, project/role/candidate persistence, feedback, and calibration queries.
+- `ui.py`: candidate-only local HTTP dashboard and feedback form.
 - `notifier.py`: macOS notification wrapper.
 - `identifiers.py`: stable project and role key generation from Backstage URLs or deterministic fallbacks.
 
@@ -65,8 +61,6 @@ See `docs/module-guide.md` for task-oriented reading guidance.
 Daily scoring: email message -> refreshed project/role records -> candidate generation -> LLM feature extraction -> local requirement matching -> deterministic scoring/ranking -> SQLite candidate rows -> human feedback -> calibration proposals.
 
 Manual scoring enters the same flow at stored project/role records.
-
-Project-level decisions are stored in the same `decisions` table as role-level decisions, using the sentinel role value from `PROJECT_GATE_ROLE`.
 
 ## Candidate Scoring
 
@@ -88,8 +82,7 @@ Main tables:
 - `candidates`: role and project-only candidate scores, feature payloads, requirement-match payloads, ranked bands, and draft suggestions.
 - `candidate_feedback`: human score corrections, score deltas, affected components, failure modes, and free-text reasons.
 - `calibration_proposals`: proposed scoring-rule adjustments produced from repeated feedback patterns.
-- `decisions`: project and role screening decisions, final buckets, structured classifier/reviewer JSON, reviewer impact, schema errors, serialized notice JSON, keys, shooting info.
-- `applications`: draft/submission/blocker records, cover notes, dry-run flag, blocker reason.
+Existing databases may retain inert `decisions` and `applications` tables. They are not read or written by runtime code and are retained only to avoid destructive data loss.
 
 Schema creation and lightweight migrations happen in `DecisionStore._ensure_schema()`. There is no separate migration framework.
 
@@ -98,7 +91,7 @@ Local files that may contain sensitive or machine-specific state include `.env`,
 ## External Services and Integrations
 
 - IMAP mailbox access, typically Gmail with an app password.
-- OpenAI-compatible chat completion APIs for first-pass screening, strict review, and cover-note generation.
+- OpenAI-compatible chat completion APIs for candidate feature extraction.
 - Backstage public or authenticated project pages.
 - Playwright Chromium/Chrome persistent profile for logged-in Backstage page fetches.
 - macOS `osascript` for desktop notifications.
@@ -111,16 +104,13 @@ Configuration is loaded in `settings.py` from environment variables after `pytho
 Important variables include:
 
 - IMAP: `IMAP_HOST`, `IMAP_PORT`, `IMAP_USERNAME`, `IMAP_PASSWORD`, `IMAP_FOLDER`, `EMAIL_SEARCH_QUERY`, `EMAIL_SUBJECT_KEYWORDS`.
-- LLM screening: `LLM_PROVIDER`, `LLM_MODEL`, `OPENAI_API_KEY`, `AI_BUILDER_API_KEY`, `AI_BUILDER_BASE_URL`, `MAX_LLM_CALLS_PER_SCAN`, `MIN_MATCH_SCORE`.
-- Reviewer and cover notes: `REVIEWER_PROVIDER`, `REVIEWER_MODEL`, `MAX_REVIEWER_CALLS_PER_SCAN`.
-- Local state: `ACTOR_PROFILE_PATH`, `DATABASE_PATH`, `DRY_RUN`.
+- Feature extraction: `LLM_PROVIDER`, `LLM_MODEL`, `OPENAI_API_KEY`, `AI_BUILDER_API_KEY`, `AI_BUILDER_BASE_URL`, `MAX_LLM_CALLS_PER_SCAN`.
+- Local state: `ACTOR_PROFILE_PATH`, `DATABASE_PATH`.
 - Browser-backed Backstage access: `BACKSTAGE_BROWSER_PROFILE_PATH`, `USE_BROWSER_FOR_BACKSTAGE`, `BACKSTAGE_BROWSER_HEADLESS`, `BACKSTAGE_BROWSER_CHANNEL`.
 
 ## Architectural Constraints
 
-- Preserve dry-run safety and explicit blocker behavior until live submission is deliberately implemented and verified.
-- Keep project screening, role screening, reviewer status, and application blockers as separate concepts.
 - Keep the daily automation optimized for one-day scans and macOS notification.
 - Do not store Backstage passwords; use the persistent browser profile for session cookies.
 - Avoid broad schema churn unless it is clearly needed; storage currently relies on inline schema creation and migration.
-- Prefer tests around parsers, screeners, storage queries, and CLI summaries when behavior changes.
+- Prefer tests around parsers, scoring, storage queries, candidate UI, and CLI summaries when behavior changes.

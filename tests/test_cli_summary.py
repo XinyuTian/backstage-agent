@@ -1,5 +1,7 @@
 from backstage_agent.agent import ScanResult
-from backstage_agent.cli import _scan_summary
+import pytest
+
+from backstage_agent.cli import _scan_summary, build_parser
 
 
 def _result(**overrides) -> ScanResult:
@@ -7,11 +9,6 @@ def _result(**overrides) -> ScanResult:
         "messages_seen": 1,
         "projects_seen": 2,
         "notices_seen": 3,
-        "project_decisions": [],
-        "project_reviews": [],
-        "decisions": [],
-        "reviews": [],
-        "applications": [],
         "candidates_scored": 3,
         "candidates_skipped_existing": 2,
         "draft_suggestions": 1,
@@ -25,6 +22,11 @@ def test_scan_summary_reports_scoring_cutover():
         "2 projects refreshed, 3 roles refreshed. "
         "Candidates: 3 scored, 2 existing skipped, 1 draft suggestion."
     )
+
+
+def test_cli_has_no_decisions_command():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["decisions"])
 
 
 def test_scan_summary_reports_zero_scoring_counts():

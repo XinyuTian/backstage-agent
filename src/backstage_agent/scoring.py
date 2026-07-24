@@ -207,10 +207,6 @@ def _score_caps(features: CandidateFeatures, matches: list[RequirementMatch]) ->
         caps.append("mandatory_requirement_not_met")
     if features.project_signals.get("hard_personal_boundary") is True:
         caps.append("hard_personal_boundary")
-    if features.project_signals.get("project_gate_rejected") is True:
-        caps.append("project_gate_rejected")
-    if features.project_signals.get("project_review_blocked") is True:
-        caps.append("project_review_blocked")
     if features.project_signals.get("expired_or_unavailable") is True:
         caps.append("expired_or_unavailable")
     if features.uncertainty.get("compensation_missing") and features.uncertainty.get("role_details_sparse"):
@@ -255,10 +251,6 @@ def _negative_drivers(features: CandidateFeatures, matches: list[RequirementMatc
         drivers.append("Compensation details missing")
     if features.uncertainty.get("role_details_sparse"):
         drivers.append("Role details sparse")
-    if features.project_signals.get("project_gate_rejected") is True:
-        drivers.append("Project gate rejected this opportunity")
-    if features.project_signals.get("project_review_blocked") is True:
-        drivers.append("Project reviewer blocked legacy application flow")
     return drivers
 
 

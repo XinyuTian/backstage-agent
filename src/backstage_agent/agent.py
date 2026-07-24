@@ -7,22 +7,16 @@ from datetime import date, datetime
 from .candidate_models import CandidateFeatures, CandidateScore, RequirementMatch, ScoreBand
 from .candidate_generation import generate_candidates
 from .feature_extractor import FeatureExtractor
-from .decision_core import should_draft_bucket, should_review_bucket
-from .application import ApplicationService
 from .email_client import ImapEmailClient
-from .models import ApplicationDraft, ReviewDecision, ScreeningDecision
 from .parser import parse_project_notices
-from .project_page_parser import parse_project_page_roles, project_page_context
-from .project_screener import (
-    ProjectScreener,
+from .project_context import (
     with_project_page_context,
     with_project_role_context,
     with_project_shooting_info,
 )
+from .project_page_parser import parse_project_page_roles, project_page_context
 from .requirement_matcher import match_requirements
-from .reviewer import DecisionReviewer
 from .scoring import load_scoring_rules, rank_candidates, score_candidate
-from .screener import RoleScreener
 from .settings import Settings, load_actor_profile
 from .storage import DecisionStore
 from .web_client import ProjectPageClient
@@ -36,11 +30,6 @@ class ScanResult:
     messages_seen: int
     projects_seen: int
     notices_seen: int
-    project_decisions: list[ScreeningDecision]
-    project_reviews: list[ReviewDecision]
-    decisions: list[ScreeningDecision]
-    reviews: list[ReviewDecision]
-    applications: list[ApplicationDraft]
     candidates_scored: int = 0
     candidates_skipped_existing: int = 0
     draft_suggestions: int = 0
@@ -60,10 +49,6 @@ class BackstageAgent:
         self.settings = settings
         self.profile = load_actor_profile(settings.actor_profile_path)
         self.email_client = ImapEmailClient(settings)
-        self.project_screener = ProjectScreener(settings, self.profile)
-        self.screener = RoleScreener(settings, self.profile)
-        self.reviewer = DecisionReviewer(settings, self.profile)
-        self.applications = ApplicationService(settings, self.profile)
         self.store = DecisionStore(settings.database_path)
         self.project_pages = ProjectPageClient(settings)
         self.feature_extractor = FeatureExtractor(settings, self.profile)
@@ -111,11 +96,6 @@ class BackstageAgent:
             messages_seen=len(messages),
             projects_seen=projects_seen,
             notices_seen=notices_seen,
-            project_decisions=[],
-            project_reviews=[],
-            decisions=[],
-            reviews=[],
-            applications=[],
             candidates_scored=scoring.candidates_scored,
             candidates_skipped_existing=scoring.candidates_skipped_existing,
             draft_suggestions=sum(bool(row["draft_suggestion"]) for row in candidate_rows),
@@ -202,15 +182,11 @@ class BackstageAgent:
     def _score_candidate_with_fallback(
         self,
         candidate,
-        project_decision: ScreeningDecision | None = None,
-        project_review: ReviewDecision | None = None,
     ) -> tuple[CandidateFeatures, list[RequirementMatch], CandidateScore]:
         try:
             features = self.feature_extractor.extract(candidate)
         except Exception as exc:  # noqa: BLE001
             return _fallback_candidate_artifacts(candidate, self.scoring_rules, "feature_extraction", exc)
-
-        features = _with_project_evaluation_context(features, project_decision, project_review)
 
         try:
             requirement_matches = match_requirements(
@@ -240,73 +216,6 @@ class BackstageAgent:
             )
 
         return features, requirement_matches, score
-
-    def _rank_candidates_with_fallback(
-        self,
-        scored_for_project: list[CandidateScoreRecord],
-    ) -> list[CandidateScoreRecord]:
-        tagged_scores = [
-            _tag_candidate_score(score, index)
-            for index, (_, _, _, score) in enumerate(scored_for_project)
-        ]
-        try:
-            ranked_scores = rank_candidates(tagged_scores, self.scoring_rules)
-        except Exception as exc:  # noqa: BLE001
-            ranked_scores = _fallback_rank_candidates(tagged_scores, exc)
-
-        ranked_by_index = {
-            _candidate_score_index(score): _untag_candidate_score(score)
-            for score in ranked_scores
-        }
-        return [
-            (candidate, features, requirement_matches, ranked_by_index[index])
-            for index, (candidate, features, requirement_matches, _score) in enumerate(scored_for_project)
-        ]
-
-
-def _should_review(decision: ScreeningDecision) -> bool:
-    if decision.final_bucket:
-        return should_review_bucket(decision.final_bucket)
-    return decision.should_apply
-
-
-def _review_allows_next_step(review: ReviewDecision) -> bool:
-    if review.final_bucket:
-        return should_draft_bucket(review.final_bucket)
-    return review.approved
-
-
-def _with_project_evaluation_context(
-    features: CandidateFeatures,
-    project_decision: ScreeningDecision | None,
-    project_review: ReviewDecision | None,
-) -> CandidateFeatures:
-    if project_decision is None and project_review is None:
-        return features
-
-    project_signals = dict(features.project_signals)
-    raw = dict(features.raw)
-    project_context = {}
-
-    if project_decision is not None:
-        project_context["project_score"] = project_decision.score
-        project_context["project_final_bucket"] = project_decision.final_bucket
-        project_context["project_should_apply"] = project_decision.should_apply
-        project_context["project_reasons"] = project_decision.reasons
-        if not project_decision.should_apply:
-            project_signals["project_gate_rejected"] = True
-
-    if project_review is not None:
-        project_context["project_review_status"] = project_review.status
-        project_context["project_review_score"] = project_review.score
-        project_context["project_review_final_bucket"] = project_review.final_bucket
-        project_context["project_review_reasons"] = project_review.reasons
-        if not _review_allows_next_step(project_review):
-            project_signals["project_review_blocked"] = True
-
-    raw["project_evaluation_context"] = project_context
-    return replace(features, project_signals=project_signals, raw=raw)
-
 
 def _fallback_candidate_artifacts(
     candidate,
