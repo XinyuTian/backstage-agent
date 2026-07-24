@@ -22,6 +22,7 @@ class FakeStore:
         self.candidates = []
         self.refreshed_projects = []
         self.refreshed_roles = []
+        self.existing_candidate_rows = []
 
     def record_project(self, project):
         return 1
@@ -65,6 +66,26 @@ class FakeStore:
     def record_candidate(self, candidate, features, requirement_matches, score):
         self.candidates.append((candidate, features, requirement_matches, score))
         return len(self.candidates)
+
+    def candidate_rescore_sources_for_date(self, target_date):
+        if not self.refreshed_projects:
+            return []
+        return [
+            (
+                self.refreshed_projects[-1],
+                [(1, role) for role in self.refreshed_roles],
+                1,
+            )
+        ]
+
+    def candidate_rows_for_date(self, target_date):
+        return self.existing_candidate_rows
+
+    def clear_candidates_for_date(self, target_date):
+        raise AssertionError("daily scan must not overwrite candidates")
+
+    def update_candidate_rank(self, candidate_id, rank_position, rank_score):
+        return None
 
 
 class FakeFeatureExtractor:
@@ -169,7 +190,7 @@ def _agent_with(
     return agent
 
 
-def test_scan_applies_only_after_reviewer_approval(monkeypatch):
+def test_scan_refreshes_and_scores_without_legacy_execution(monkeypatch):
     from backstage_agent import agent as agent_module
 
     notice = CastingNotice(
@@ -179,7 +200,7 @@ def test_scan_applies_only_after_reviewer_approval(monkeypatch):
         role="Lead",
         location="Los Angeles",
         compensation="$100",
-        role_key="role-approved",
+        role_key="role-scored",
         description="Lead role",
         application_url="https://example.com/apply",
         raw_text="Lead role",
@@ -198,17 +219,37 @@ def test_scan_applies_only_after_reviewer_approval(monkeypatch):
     monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [project])
     monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
     backstage_agent.project_pages.fetch_html = lambda url: "<html></html>"
+    backstage_agent.project_screener.screen = lambda notice: (_ for _ in ()).throw(
+        AssertionError("legacy project screening ran")
+    )
+    backstage_agent.screener.screen = lambda notice: (_ for _ in ()).throw(
+        AssertionError("legacy role screening ran")
+    )
+    backstage_agent.reviewer.review_project = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("legacy project review ran")
+    )
+    backstage_agent.reviewer.review = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("legacy role review ran")
+    )
+    backstage_agent.applications.create_or_submit = lambda decision: (_ for _ in ()).throw(
+        AssertionError("legacy application drafting ran")
+    )
 
-    result = backstage_agent.scan(limit=1, days=1)
+    result = backstage_agent.scan(limit=1, days=1, target_date=date(2026, 7, 23))
 
-    assert len(backstage_agent.store.reviews) == 2
-    assert len(result.project_reviews) == 1
-    assert len(result.reviews) == 1
-    assert len(backstage_agent.store.applications) == 1
-    assert len(result.applications) == 1
+    assert len(backstage_agent.store.refreshed_projects) == 1
+    assert len(backstage_agent.store.refreshed_roles) == 1
+    assert result.candidates_scored == 1
+    assert result.candidates_skipped_existing == 0
+    assert result.notices_seen == 1
+    assert result.project_decisions == []
+    assert result.project_reviews == []
+    assert result.decisions == []
+    assert result.reviews == []
+    assert result.applications == []
 
 
-def test_scan_holds_conflict_without_application(monkeypatch):
+def test_scan_preserves_existing_candidate_scores(monkeypatch):
     from backstage_agent import agent as agent_module
 
     notice = CastingNotice(
@@ -218,7 +259,7 @@ def test_scan_holds_conflict_without_application(monkeypatch):
         role="Lead",
         location="Los Angeles",
         compensation="$100",
-        role_key="role-held",
+        role_key="role-existing",
         description="Lead role",
         application_url="https://example.com/apply",
         raw_text="Lead role",
@@ -233,110 +274,33 @@ def test_scan_holds_conflict_without_application(monkeypatch):
         raw_text="Project",
         project_key="project-key",
     )
-    backstage_agent = _agent_with(notice, should_apply=True, reviewer_status="rejected")
+    backstage_agent = _agent_with(notice, should_apply=True, reviewer_status="approved")
     monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [project])
     monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
     backstage_agent.project_pages.fetch_html = lambda url: "<html></html>"
+    backstage_agent.store.existing_candidate_rows = [
+        {
+            "id": 7,
+            "candidate_type": "role",
+            "project_key": "project-key",
+            "role_key": "role-existing",
+            "overall_score": 88,
+            "score_band": "strong_candidate",
+            "subscores_json": "{}",
+            "score_json": (
+                '{"score_caps":[],"positive_drivers":[],"negative_drivers":[],'
+                '"score_trace":{},"draft_suggestion":true,"scoring_version":"v1"}'
+            ),
+            "rank_score": 88,
+            "rank_position": 1,
+            "draft_suggestion": 1,
+            "scoring_version": "v1",
+        }
+    ]
 
-    result = backstage_agent.scan(limit=1, days=1)
+    result = backstage_agent.scan(limit=1, days=1, target_date=date(2026, 7, 23))
 
-    assert len(backstage_agent.store.reviews) == 2
-    assert len(result.project_reviews) == 1
-    assert len(result.reviews) == 1
-    assert len(backstage_agent.store.applications) == 0
-    assert len(result.applications) == 0
-
-
-def test_scan_does_not_draft_reviewer_downgraded_role(monkeypatch):
-    from backstage_agent import agent as agent_module
-
-    notice = CastingNotice(
-        source_message_id="m1",
-        title="Project - Lead",
-        project="Project",
-        role="Lead",
-        location="Los Angeles",
-        compensation="$100",
-        role_key="role-ready-review",
-        description="Lead role",
-        application_url="https://example.com/apply",
-        raw_text="Lead role",
-        shooting_locations="Los Angeles",
-        shooting_dates="July 2026",
-    )
-    project = ProjectNotice(
-        source_message_id="m1",
-        title="Project",
-        project_url="https://example.com",
-        description="Project",
-        raw_text="Project",
-        project_key="project-key",
-    )
-    backstage_agent = _agent_with(
-        notice,
-        should_apply=True,
-        reviewer_status="hold",
-        final_bucket="auto_apply_draft",
-        review_bucket="ready_for_review",
-    )
-    monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [project])
-    monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
-    backstage_agent.project_pages.fetch_html = lambda url: "<html></html>"
-
-    result = backstage_agent.scan(limit=1, days=1)
-
-    assert "auto_apply_draft" in backstage_agent.reviewer.initial_buckets
-    assert len(backstage_agent.store.applications) == 0
-    assert len(result.applications) == 0
-
-
-def test_scan_refreshes_repeated_project_without_running_candidate_scoring(monkeypatch):
-    from backstage_agent import agent as agent_module
-
-    notice = CastingNotice(
-        source_message_id="m1",
-        title="Project - Lead",
-        project="Project",
-        role="Lead",
-        location="Los Angeles",
-        compensation="$100",
-        role_key="role-project-held",
-        description="Lead role",
-        application_url="https://example.com/apply",
-        raw_text="Lead role",
-        shooting_locations="Los Angeles",
-        shooting_dates="July 2026",
-    )
-    project = ProjectNotice(
-        source_message_id="m1",
-        title="Project",
-        project_url="https://example.com",
-        description="Project",
-        raw_text="Project",
-        project_key="project-key",
-    )
-    backstage_agent = _agent_with(
-        notice,
-        should_apply=True,
-        reviewer_status="approved",
-        project_review_status="hold",
-        project_review_bucket="ready_for_review",
-    )
-    monkeypatch.setattr(agent_module, "parse_project_notices", lambda message: [project])
-    monkeypatch.setattr(agent_module, "parse_project_page_roles", lambda project, html: [notice])
-    backstage_agent.project_pages.fetch_html = lambda url: "<html></html>"
-    backstage_agent.feature_extractor = SimpleNamespace(
-        extract=lambda candidate: (_ for _ in ()).throw(AssertionError("candidate scoring ran"))
-    )
-
-    result = backstage_agent.scan(limit=1, days=1, target_date=date(2026, 7, 15))
-
-    assert len(backstage_agent.store.candidates) == 0
     assert result.candidates_scored == 0
-    assert result.draft_suggestions == 0
-    assert backstage_agent.store.refreshed_projects[0].source_message_id == "m1"
-    assert backstage_agent.store.refreshed_roles[0].role_key == "role-project-held"
-    assert len(backstage_agent.store.decisions) == 1
-    assert len(result.decisions) == 0
-    assert len(backstage_agent.store.applications) == 0
-    assert len(result.applications) == 0
+    assert result.candidates_skipped_existing == 1
+    assert result.draft_suggestions == 1
+    assert backstage_agent.store.candidates == []

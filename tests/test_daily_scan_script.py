@@ -14,7 +14,7 @@ SCRIPT = REPO / "scripts" / "daily_scan.sh"
 PLIST = REPO / "launchd" / "com.sarahtxy.backstage-agent.daily.plist"
 
 
-def test_daily_scan_runs_selection_without_scoring_or_cli_notify():
+def test_daily_scan_uses_scoring_first_scan_without_second_command_or_cli_notify():
     script = SCRIPT.read_text(encoding="utf-8")
     assert "backstage_agent.cli scan --days 1 --limit 25" in script
     assert "scan --days 1 --limit 25 --notify" not in script

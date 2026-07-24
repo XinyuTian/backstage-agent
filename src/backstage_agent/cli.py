@@ -137,6 +137,7 @@ def _scan(
                 "reviews": len(result.reviews),
                 "applications": len(result.applications),
                 "candidates_scored": result.candidates_scored,
+                "candidates_skipped_existing": result.candidates_skipped_existing,
                 "draft_suggestions": result.draft_suggestions,
                 "days": days,
                 "date": target_date.isoformat() if target_date else None,
@@ -151,38 +152,14 @@ def _scan(
 
 
 def _scan_summary(result) -> str:
-    project_rejected = sum(1 for decision in result.project_decisions if not decision.should_apply)
-    project_passed_screening = len(result.project_decisions) - project_rejected
-    project_approved = sum(1 for review in result.project_reviews if review.approved)
-    project_needs_check = max(0, project_passed_screening - project_approved)
-    rejected = sum(1 for decision in result.decisions if not decision.should_apply)
-    first_passed = len(result.decisions) - rejected
-    approved = len(result.applications)
-    needs_check = max(0, first_passed - approved)
-    submitted = sum(1 for app in result.applications if app.status == "submitted_backstage")
-    blocked = sum(
-        1
-        for app in result.applications
-        if app.status not in {"drafted", "submitted_backstage"}
+    draft_label = "draft suggestion" if result.draft_suggestions == 1 else "draft suggestions"
+    return (
+        f"{result.projects_seen} projects refreshed, "
+        f"{result.notices_seen} roles refreshed. "
+        f"Candidates: {result.candidates_scored} scored, "
+        f"{result.candidates_skipped_existing} existing skipped, "
+        f"{result.draft_suggestions} {draft_label}."
     )
-    summary = (
-        f"{len(result.project_decisions)} projects checked, "
-        f"{project_approved} project approved, {project_needs_check} project need check, "
-        f"{project_rejected} project rejected. "
-        f"{result.notices_seen} roles checked, {approved} approved, "
-        f"{submitted} submitted, {blocked} application blockers, "
-        f"{needs_check} need check, {rejected} rejected."
-    )
-    budget_warnings = _budget_warnings(result)
-    bucket_summary = _bucket_summary(result)
-    if bucket_summary:
-        summary = f"{summary} {bucket_summary}"
-    if result.candidates_scored:
-        summary = (
-            f"{summary} Candidates: {result.candidates_scored} scored, "
-            f"{result.draft_suggestions} draft suggestions."
-        )
-    return f"{summary} {budget_warnings}" if budget_warnings else summary
 
 
 def _bucket_summary(result) -> str:

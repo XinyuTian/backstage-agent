@@ -2,13 +2,13 @@
 
 A local-first, conservative automation agent for Backstage casting workflows. It scans recent Backstage notification emails, extracts casting projects and roles, scores mutual-selection candidates against an actor profile, stores decisions in SQLite, and prepares application drafts for promising matches.
 
-The default workflow is intentionally safe:
+The default workflow is scoring-first and intentionally safe:
 
 - scan the latest day of Backstage notification emails
-- run deterministic checks before spending LLM calls
+- refresh projects and roles, then score and rank candidates for that date
 - always produce candidate scores and score traces instead of hiding opportunities behind a single filter
-- use a strict second-pass reviewer before applications
-- store decisions, candidate feedback, calibration proposals, and application blockers for auditability
+- preserve existing scores unless an overwrite is explicitly requested
+- store scores, candidate feedback, and calibration proposals for auditability
 - keep `DRY_RUN=true` unless live submission is deliberately implemented and verified
 
 ## Quick Start
@@ -73,7 +73,7 @@ python3 -m backstage_agent.cli backstage-login-check
 
 `parse-sample` is useful for parser tuning before connecting a real inbox.
 
-The `score-candidates --date YYYY-MM-DD` command runs mutual-selection scoring manually and preserves existing scores by default. Add `--overwrite` to delete and rebuild that date's scores. The `candidates` command lists ranked scores, `candidate-feedback` records a human correction, and `calibration-patterns` groups repeated taxonomy patterns into proposed scoring-rule changes.
+The daily `scan` command runs mutual-selection scoring automatically and preserves existing scores by default. The `score-candidates --date YYYY-MM-DD` command remains available for an explicit follow-up; add `--overwrite` only to intentionally delete and rebuild that date's scores. The `candidates` command lists ranked scores, `candidate-feedback` records a human correction, and `calibration-patterns` groups repeated taxonomy patterns into proposed scoring-rule changes.
 
 The `ui` command starts a local dashboard at `http://127.0.0.1:8765` for searching and reviewing saved screening decisions. Candidate rankings are available at `http://127.0.0.1:8765/candidates`.
 
@@ -83,13 +83,13 @@ The `ui` command starts a local dashboard at `http://127.0.0.1:8765` for searchi
 2. The parser extracts project notices from each email.
 3. The agent optionally fetches Backstage project pages and extracts role, location, and date details.
 4. Repeated projects and roles are refreshed in place from the newest digest/page data.
-5. Project-level deterministic and LLM screening gates the application-drafting path.
-6. A stricter reviewer independently approves, rejects, or holds the project gate.
-7. Approved projects proceed to role-level screening and review.
-8. Approved roles are recorded as application drafts or blocked attempts.
-9. Manual `score-candidates` runs candidate generation, feature extraction, local matching, deterministic scoring, and ranking from stored data.
-10. Human feedback can correct a candidate score and feed calibration proposals.
-11. The CLI prints JSON summaries and the daily scan can send a macOS notification with `--notify`.
+5. `scan` generates role or project-only candidates from the refreshed records.
+6. It extracts structured features, matches requirements locally, calculates deterministic scores, and ranks the date's candidates.
+7. Existing candidate identities are preserved and reported as skipped.
+8. Human feedback can correct a candidate score and feed calibration proposals.
+9. The CLI prints a scoring-oriented JSON summary and the daily scan can send a macOS notification with `--notify`.
+
+The default scan does not run legacy project screening, role screening, reviewer calls, or application drafting. Historical decisions, dashboard views, storage interfaces, and compatibility code remain available pending the separately approved removal step.
 
 Application questions that require personal knowledge, such as swimming ability, wardrobe ownership, exact availability, or comfort with specific scenes, should pause for user confirmation unless the answer is already captured in the actor profile.
 
@@ -110,7 +110,7 @@ If Backstage or Cloudflare blocks the automated browser, the agent should stop a
 
 The daily local run is defined in `scripts/daily_scan.sh` and scheduled by `launchd/com.sarahtxy.backstage-agent.daily.plist`. launchd runs the script at **9:00, 10:00, 11:00, and 12:00** local time.
 
-The script runs selection only (no candidate scoring). It invokes:
+The script runs the scoring-first daily workflow. It invokes:
 
 ```bash
 python3 -m backstage_agent.cli scan --days 1 --limit 25
@@ -133,7 +133,7 @@ launchctl bootout gui/$(id -u)/com.sarahtxy.backstage-agent.daily 2>/dev/null ||
 launchctl bootstrap gui/$(id -u) "$PWD/launchd/com.sarahtxy.backstage-agent.daily.plist"
 ```
 
-The scheduled command runs selection only; candidate scoring is never invoked automatically.
+The scheduled command refreshes and scores candidates automatically. It does not run the legacy screening, review, or application-drafting path.
 
 Run candidate scoring manually for an exact date:
 

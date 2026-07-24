@@ -42,6 +42,7 @@ class ScanResult:
     reviews: list[ReviewDecision]
     applications: list[ApplicationDraft]
     candidates_scored: int = 0
+    candidates_skipped_existing: int = 0
     draft_suggestions: int = 0
 
 
@@ -74,11 +75,6 @@ class BackstageAgent:
             days=days,
             target_date=target_date,
         )
-        project_decisions: list[ScreeningDecision] = []
-        project_reviews: list[ReviewDecision] = []
-        decisions: list[ScreeningDecision] = []
-        reviews: list[ReviewDecision] = []
-        application_drafts: list[ApplicationDraft] = []
         projects_seen = 0
         notices_seen = 0
         seen_date = target_date or datetime.now().astimezone().date()
@@ -86,7 +82,6 @@ class BackstageAgent:
         for message in messages:
             projects = parse_project_notices(message)
             projects_seen += len(projects)
-            notices = []
             for project in projects:
                 project_id = self.store.upsert_project(project, seen_date=seen_date)
                 html = self.project_pages.fetch_html(project.project_url)
@@ -105,61 +100,25 @@ class BackstageAgent:
                         page_roles[0].shooting_dates,
                     )
                     project = with_project_role_context(project, page_roles)
-                project_decision = self.project_screener.screen(project)
-                project_decision_id = self.store.record_decision(project_decision)
-                project_decisions.append(project_decision)
-                allow_legacy_role_flow = False
-                project_review = None
-                if _should_review(project_decision):
-                    project_review = self.reviewer.review_project(
-                        project_decision.notice,
-                        initial_bucket=project_decision.final_bucket,
-                        classifier_json=project_decision.classifier_json,
-                    )
-                    self.store.record_review(project_decision_id, project_review)
-                    project_reviews.append(project_review)
-                    allow_legacy_role_flow = _review_allows_next_step(project_review)
 
                 for role in page_roles:
                     self.store.upsert_role(project_id, role)
-                    if allow_legacy_role_flow:
-                        notices.append(role)
+                notices_seen += len(page_roles)
 
-            notices_seen += len(notices)
-            for notice in notices:
-                decision = self.screener.screen(notice)
-                decision_id = self.store.record_decision(decision)
-                decisions.append(decision)
-                if _should_review(decision):
-                    review = self.reviewer.review(
-                        notice,
-                        initial_bucket=decision.final_bucket,
-                        classifier_json=decision.classifier_json,
-                    )
-                    self.store.record_review(decision_id, review)
-                    reviews.append(review)
-                    if _review_allows_next_step(review):
-                        try:
-                            draft = self.applications.create_or_submit(decision)
-                        except Exception as exc:  # noqa: BLE001
-                            draft = self.applications.failed_attempt(
-                                decision,
-                                f"{exc.__class__.__name__}: {exc}",
-                            )
-                        self.store.record_application(draft)
-                        application_drafts.append(draft)
-
+        scoring = self.score_candidates_for_date(seen_date, overwrite=False)
+        candidate_rows = self.store.candidate_rows_for_date(seen_date.isoformat())
         return ScanResult(
             messages_seen=len(messages),
             projects_seen=projects_seen,
             notices_seen=notices_seen,
-            project_decisions=project_decisions,
-            project_reviews=project_reviews,
-            decisions=decisions,
-            reviews=reviews,
-            applications=application_drafts,
-            candidates_scored=0,
-            draft_suggestions=0,
+            project_decisions=[],
+            project_reviews=[],
+            decisions=[],
+            reviews=[],
+            applications=[],
+            candidates_scored=scoring.candidates_scored,
+            candidates_skipped_existing=scoring.candidates_skipped_existing,
+            draft_suggestions=sum(bool(row["draft_suggestion"]) for row in candidate_rows),
         )
 
     def score_candidates_for_date(

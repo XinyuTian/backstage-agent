@@ -2,7 +2,7 @@
 
 ## System Overview
 
-Backstage Agent is a CLI-first Python package under `src/backstage_agent`. Its daily path fetches Backstage casting notification emails, refreshes project and role data, and runs selection/review. A separate manual command scores mutual-selection candidates against local actor facts and project signals. Both paths persist auditable data in SQLite and expose it through a local dashboard.
+Backstage Agent is a CLI-first Python package under `src/backstage_agent`. Its daily path fetches Backstage casting notification emails, refreshes project and role data, and scores mutual-selection candidates against local actor facts and project signals. The same scoring service remains available through a manual exact-date command.
 
 The system is intentionally conservative: the default is dry-run application drafting, not live submission.
 
@@ -14,14 +14,14 @@ The system is intentionally conservative: the default is dry-run application dra
 4. `DecisionStore` refreshes matching project and role identities with the newest digest/page data.
 5. `ProjectPageClient` fetches project-page HTML through normal HTTP or an authenticated Playwright browser profile when enabled.
 6. `project_page_parser` extracts page context, shooting info, and role-level notices when page HTML is available.
-7. `ProjectScreener` performs local project rejects or structured LLM project screening into a final bucket.
-8. `DecisionReviewer.review_project()` performs downgrade-only structured project review.
-9. Approved projects proceed to role-level screening through `RoleScreener`.
-10. Auto-draft role buckets receive strict downgrade-only review through `DecisionReviewer.review()`.
-11. Roles that remain `Auto Apply/Draft` after review are passed to `ApplicationService`, which drafts or blocks application attempts.
-12. The CLI prints a JSON summary and optionally sends a macOS notification.
+7. `candidate_generation` creates role candidates or a project-only candidate when explicit roles are missing.
+8. `FeatureExtractor` extracts structured facts, `requirement_matcher` checks local actor facts, and `scoring` calculates deterministic scores and ranks.
+9. `DecisionStore` preserves existing candidate identities by default and persists new score artifacts.
+10. The CLI prints a scoring-oriented JSON summary and optionally sends a macOS notification.
 
-Manual `score-candidates --date YYYY-MM-DD` loads stored projects and roles, generates candidates, extracts structured features, matches requirements locally, computes deterministic scores, and ranks the combined date set. Existing scores are preserved unless `--overwrite` is supplied.
+The default scan does not invoke legacy project screening, role screening, reviewer calls, or application drafting. Those modules, historical tables, storage interfaces, and dashboard views remain compatibility code pending a separately approved removal step.
+
+Manual `score-candidates --date YYYY-MM-DD` runs the same stored-date scoring service. Existing scores are preserved unless `--overwrite` is supplied.
 
 ## Module Responsibilities
 
@@ -62,9 +62,9 @@ See `docs/module-guide.md` for task-oriented reading guidance.
 
 ## Data Flow
 
-Daily selection: email message -> refreshed project/role records -> project screening/review -> role screening/review -> application draft/blocker -> SQLite decisions.
+Daily scoring: email message -> refreshed project/role records -> candidate generation -> LLM feature extraction -> local requirement matching -> deterministic scoring/ranking -> SQLite candidate rows -> human feedback -> calibration proposals.
 
-Manual scoring: stored project/role records -> candidate generation -> LLM feature extraction -> local requirement matching -> deterministic scoring/ranking -> SQLite candidate rows -> human feedback -> calibration proposals.
+Manual scoring enters the same flow at stored project/role records.
 
 Project-level decisions are stored in the same `decisions` table as role-level decisions, using the sentinel role value from `PROJECT_GATE_ROLE`.
 

@@ -23,7 +23,7 @@ Use this guide to choose the smallest set of files to read for a task.
 
 ## Screening And Review
 
-- Start with `src/backstage_agent/agent.py` to understand the order of project gates, project reviews, role screening, role reviews, and applications.
+- The default `scan` path does not invoke screening or review. These modules remain legacy compatibility code pending the separately approved removal step.
 - Use `src/backstage_agent/decision_core.py` for the five final buckets, structured model validation, reviewer downgrade policy, and reusable screening rules.
 - Use `src/backstage_agent/project_screener.py` for project-level local checks and first-pass project LLM screening.
 - Use `src/backstage_agent/screener.py` for role-level local checks and first-pass role LLM screening.
@@ -32,7 +32,7 @@ Use this guide to choose the smallest set of files to read for a task.
 
 ## Candidate Scoring
 
-- Start with `src/backstage_agent/agent.py` for the explicit exact-date scoring service; daily `scan` orchestration does not run candidate scoring.
+- Start with `src/backstage_agent/agent.py` for the scoring-first daily `scan` orchestration and the shared exact-date scoring service.
 - Start with `src/backstage_agent/cli.py` for `score-candidates --date YYYY-MM-DD [--overwrite]` and the overwrite-mode `rescore-candidates` compatibility alias.
 - Use `src/backstage_agent/candidate_models.py` for candidate, feature, requirement match, score, feedback, and calibration data structures.
 - Use `src/backstage_agent/candidate_generation.py` for role and project-only candidates from parsed projects and roles.

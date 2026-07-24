@@ -57,7 +57,7 @@ class FakeReviewer:
         )
 
 
-def test_manual_scoring_scores_project_only_candidate_when_roles_missing(monkeypatch, settings_factory, tmp_path):
+def test_daily_scan_scores_project_only_candidate_when_roles_missing(monkeypatch, settings_factory, tmp_path):
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
         '{"name":"Actor","location":"LA","age_range":"25-45","genders":["female"],'
@@ -90,16 +90,18 @@ def test_manual_scoring_scores_project_only_candidate_when_roles_missing(monkeyp
     agent.reviewer = FakeReviewer()
     agent.feature_extractor = FakeFeatureExtractor()
 
-    agent.scan(limit=1, target_date=date(2026, 7, 15))
-    result = agent.score_candidates_for_date(date(2026, 7, 15))
+    result = agent.scan(limit=1, target_date=date(2026, 7, 15))
+    safe_repeat = agent.score_candidates_for_date(date(2026, 7, 15))
     candidates = agent.store.search_candidates()
 
     assert result.candidates_scored == 1
+    assert safe_repeat.candidates_scored == 0
+    assert safe_repeat.candidates_skipped_existing == 1
     assert candidates[0]["candidate_type"] == "project_only"
     assert candidates[0]["overall_score"] > 0
 
 
-def test_manual_scoring_persists_auditable_fallback_when_scoring_step_fails(
+def test_daily_scan_persists_auditable_fallback_when_scoring_step_fails(
     monkeypatch,
     settings_factory,
     tmp_path,
@@ -136,8 +138,7 @@ def test_manual_scoring_persists_auditable_fallback_when_scoring_step_fails(
     agent.reviewer = FakeReviewer()
     agent.feature_extractor = FailingFeatureExtractor()
 
-    agent.scan(limit=1, target_date=date(2026, 7, 15))
-    result = agent.score_candidates_for_date(date(2026, 7, 15))
+    result = agent.scan(limit=1, target_date=date(2026, 7, 15))
     candidates = agent.store.search_candidates()
     features_payload = json.loads(candidates[0]["features_json"])
     score_payload = json.loads(candidates[0]["score_json"])
@@ -152,7 +153,7 @@ def test_manual_scoring_persists_auditable_fallback_when_scoring_step_fails(
     assert "Candidate scoring fallback used" in score_payload["negative_drivers"]
 
 
-def test_manual_scoring_keeps_scores_attached_to_original_role_after_ranking(
+def test_daily_scan_keeps_scores_attached_to_original_role_after_ranking(
     monkeypatch,
     settings_factory,
     tmp_path,
@@ -238,8 +239,7 @@ def test_manual_scoring_keeps_scores_attached_to_original_role_after_ranking(
 
     agent._score_candidate_with_fallback = fake_score
 
-    agent.scan(limit=1, target_date=date(2026, 7, 15))
-    result = agent.score_candidates_for_date(date(2026, 7, 15))
+    result = agent.scan(limit=1, target_date=date(2026, 7, 15))
     candidates = agent.store.search_candidates()
     candidates_by_role = {row["role_key"]: row for row in candidates}
 
@@ -397,9 +397,7 @@ def test_manual_scoring_skips_existing_by_default_and_overwrites_explicitly(
     agent.project_screener = FakeProjectScreener()
     agent.reviewer = FakeReviewer()
     agent.feature_extractor = FakeFeatureExtractor()
-    agent.scan(limit=1, target_date=date(2026, 7, 15))
-
-    first = agent.score_candidates_for_date(date(2026, 7, 15))
+    first = agent.scan(limit=1, target_date=date(2026, 7, 15))
     safe_repeat = agent.score_candidates_for_date(date(2026, 7, 15))
     overwrite = agent.score_candidates_for_date(date(2026, 7, 15), overwrite=True)
 

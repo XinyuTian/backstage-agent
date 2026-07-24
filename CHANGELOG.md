@@ -16,6 +16,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Changed
 
+- Made `scan` the scoring-first daily workflow: it refreshes projects and roles, scores and ranks candidates for the scan date, preserves existing scores by default, and no longer invokes legacy screening, review, or application drafting. Legacy data, dashboard views, and compatibility code remain available.
 - Daily automation retries the selection scan at 9:00, 10:00, 11:00, and 12:00 when no Backstage email is seen yet; the shell notifies on success or after the final noon miss, tracks per-day state in `logs/daily-scan-state.json`, and no longer passes `--notify` to the scan CLI.
 - Refreshed README structure so setup, configuration, commands, daily automation, testing, and project status are easier to scan.
 - Recorded active Instagram tagging as an allowed actor preference and instructed project/role screeners not to reject roles for that requirement.
