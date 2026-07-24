@@ -30,6 +30,18 @@ Use this guide to choose the smallest set of files to read for a task.
 - Use `src/backstage_agent/reviewer.py` for downgrade-only reviewer behavior and reviewer provider calls.
 - Relevant tests: `tests/test_decision_core.py`, `tests/test_structured_screening.py`, `tests/test_structured_reviewer.py`, `tests/test_agent_review_gate.py`, `tests/test_project_screener.py`, `tests/test_screener.py`.
 
+## Candidate Scoring
+
+- Start with `src/backstage_agent/agent.py` for the explicit exact-date scoring service; daily `scan` orchestration does not run candidate scoring.
+- Start with `src/backstage_agent/cli.py` for `score-candidates --date YYYY-MM-DD [--overwrite]` and the overwrite-mode `rescore-candidates` compatibility alias.
+- Use `src/backstage_agent/candidate_models.py` for candidate, feature, requirement match, score, feedback, and calibration data structures.
+- Use `src/backstage_agent/candidate_generation.py` for role and project-only candidates from parsed projects and roles.
+- Use `src/backstage_agent/feature_extractor.py` for structured LLM feature extraction that returns facts only, not scores.
+- Use `src/backstage_agent/requirement_matcher.py` for local requirement matching against stored actor facts.
+- Use `src/backstage_agent/scoring.py` for deterministic scores, bands, caps, traces, draft suggestions, and ranking.
+- Use `src/backstage_agent/calibration.py` for turning repeated feedback patterns into scoring-rule proposals.
+- Relevant tests: `tests/test_candidate_models.py`, `tests/test_candidate_generation.py`, `tests/test_feature_extractor.py`, `tests/test_requirement_matcher.py`, `tests/test_candidate_scoring.py`, `tests/test_agent_candidate_scoring.py`, `tests/test_candidate_storage.py`, `tests/test_cli_candidates.py`, `tests/test_ui_candidates.py`, and `tests/test_calibration.py`.
+
 ## Application Drafting
 
 - Start with `src/backstage_agent/application.py` for cover-note generation and dry-run/live-adapter guard behavior.
@@ -39,9 +51,10 @@ Use this guide to choose the smallest set of files to read for a task.
 ## Storage And Dashboard
 
 - Start with `src/backstage_agent/storage.py` for SQLite schema, persistence, search filters, status counts, and lightweight migrations.
-- Use `src/backstage_agent/ui.py` for dashboard rendering, filters, status labels, and application blocker display.
+- Use `src/backstage_agent/ui.py` for dashboard rendering, filters, status labels, candidate rankings, candidate feedback form affordances, and application blocker display.
 - Keep screening/review status distinct from application blocker state. Structured rows include final bucket, classifier JSON, reviewer JSON, reviewer impact, and schema errors.
-- Relevant tests: `tests/test_storage_dashboard.py`, `tests/test_ui_labels.py`.
+- Candidate rows include score JSON, feature JSON, requirement-match JSON, ranked band, rank position, and draft-suggestion fields.
+- Relevant tests: `tests/test_storage_dashboard.py`, `tests/test_candidate_storage.py`, `tests/test_ui_labels.py`, `tests/test_ui_candidates.py`.
 
 ## Backstage Browser Access
 

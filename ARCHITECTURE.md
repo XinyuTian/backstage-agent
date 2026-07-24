@@ -2,7 +2,7 @@
 
 ## System Overview
 
-Backstage Agent is a CLI-first Python package under `src/backstage_agent`. It fetches Backstage casting notification emails, extracts project and role data, optionally enriches projects from Backstage pages, screens matches against a local actor profile, records all decisions in SQLite, and exposes a small local dashboard for review.
+Backstage Agent is a CLI-first Python package under `src/backstage_agent`. Its daily path fetches Backstage casting notification emails, refreshes project and role data, and runs selection/review. A separate manual command scores mutual-selection candidates against local actor facts and project signals. Both paths persist auditable data in SQLite and expose it through a local dashboard.
 
 The system is intentionally conservative: the default is dry-run application drafting, not live submission.
 
@@ -11,7 +11,7 @@ The system is intentionally conservative: the default is dry-run application dra
 1. `src/backstage_agent/cli.py` handles `scan` arguments and loads settings.
 2. `BackstageAgent.scan()` in `src/backstage_agent/agent.py` fetches recent email messages from IMAP.
 3. `parser.parse_project_notices()` extracts project-level notices from each email digest.
-4. `DecisionStore` skips projects already seen by project key or title/date fallback.
+4. `DecisionStore` refreshes matching project and role identities with the newest digest/page data.
 5. `ProjectPageClient` fetches project-page HTML through normal HTTP or an authenticated Playwright browser profile when enabled.
 6. `project_page_parser` extracts page context, shooting info, and role-level notices when page HTML is available.
 7. `ProjectScreener` performs local project rejects or structured LLM project screening into a final bucket.
@@ -19,8 +19,9 @@ The system is intentionally conservative: the default is dry-run application dra
 9. Approved projects proceed to role-level screening through `RoleScreener`.
 10. Auto-draft role buckets receive strict downgrade-only review through `DecisionReviewer.review()`.
 11. Roles that remain `Auto Apply/Draft` after review are passed to `ApplicationService`, which drafts or blocks application attempts.
-12. `DecisionStore` persists projects, roles, decisions, reviewer results, and application records.
-13. The CLI prints a JSON summary and optionally sends a macOS notification.
+12. The CLI prints a JSON summary and optionally sends a macOS notification.
+
+Manual `score-candidates --date YYYY-MM-DD` loads stored projects and roles, generates candidates, extracts structured features, matches requirements locally, computes deterministic scores, and ranks the combined date set. Existing scores are preserved unless `--overwrite` is supplied.
 
 ## Module Responsibilities
 
@@ -36,6 +37,12 @@ The system is intentionally conservative: the default is dry-run application dra
 - `project_screener.py`: project-level local checks and first-pass project LLM screening.
 - `screener.py`: role-level local checks and first-pass role LLM screening.
 - `decision_core.py`: five bucket constants, structured LLM/reviewer validation, rules loading, and deterministic bucket resolution.
+- `candidate_models.py`: candidate, feature, requirement match, score, feedback, and calibration data structures.
+- `candidate_generation.py`: role and project-only candidate generation from parsed projects and roles.
+- `feature_extractor.py`: structured LLM feature extraction that does not produce scores or decisions.
+- `requirement_matcher.py`: local requirement matching against stored actor facts.
+- `scoring.py`: deterministic score, cap, band, trace, draft-suggestion, and ranking logic.
+- `calibration.py`: proposal generation from repeated human feedback taxonomy patterns.
 - `reviewer.py`: downgrade-only structured project and role reviewer LLM calls.
 - `application.py`: cover-note generation and dry-run/live-adapter guard behavior.
 - `storage.py`: SQLite schema creation, lightweight migrations, persistence, dashboard queries, and key backfills.
@@ -55,9 +62,20 @@ See `docs/module-guide.md` for task-oriented reading guidance.
 
 ## Data Flow
 
-Email message -> project notices -> optional project page HTML -> project screening decision/bucket -> project review/bucket -> role notices -> role screening decision/bucket -> role review/bucket -> application draft/blocker -> SQLite rows -> CLI summary/dashboard.
+Daily selection: email message -> refreshed project/role records -> project screening/review -> role screening/review -> application draft/blocker -> SQLite decisions.
+
+Manual scoring: stored project/role records -> candidate generation -> LLM feature extraction -> local requirement matching -> deterministic scoring/ranking -> SQLite candidate rows -> human feedback -> calibration proposals.
 
 Project-level decisions are stored in the same `decisions` table as role-level decisions, using the sentinel role value from `PROJECT_GATE_ROLE`.
+
+## Candidate Scoring
+
+- `candidate_models.py` defines candidate, feature, requirement match, score, feedback, and calibration data structures.
+- `candidate_generation.py` creates role and project-only candidates from parsed projects and roles.
+- `feature_extractor.py` asks the LLM for structured features only.
+- `requirement_matcher.py` checks extracted requirements against local actor facts.
+- `scoring.py` computes deterministic scores, bands, caps, and ranks.
+- `calibration.py` turns repeated human feedback patterns into scoring-rule proposals.
 
 ## State and Storage
 
@@ -67,6 +85,9 @@ Main tables:
 
 - `projects`: parsed project notices, project keys, page-derived shooting info.
 - `roles`: role notices associated with projects.
+- `candidates`: role and project-only candidate scores, feature payloads, requirement-match payloads, ranked bands, and draft suggestions.
+- `candidate_feedback`: human score corrections, score deltas, affected components, failure modes, and free-text reasons.
+- `calibration_proposals`: proposed scoring-rule adjustments produced from repeated feedback patterns.
 - `decisions`: project and role screening decisions, final buckets, structured classifier/reviewer JSON, reviewer impact, schema errors, serialized notice JSON, keys, shooting info.
 - `applications`: draft/submission/blocker records, cover notes, dry-run flag, blocker reason.
 

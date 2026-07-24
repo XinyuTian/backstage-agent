@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from .application import ApplicationService
+from .candidate_models import HumanFeedback
 from .decision_core import DecisionBucket, label_for_bucket
 from .models import CastingNotice, ScreeningDecision
 from .project_labels import extract_backstage_project_labels
@@ -32,12 +33,18 @@ class DashboardServer:
                 if parsed.path == "/":
                     self._send_html(_render_index(store, settings, parse_qs(parsed.query)))
                     return
+                if parsed.path == "/candidates":
+                    self._send_html(_render_candidates_index(store, parse_qs(parsed.query)))
+                    return
                 self.send_error(404)
 
             def do_POST(self) -> None:  # noqa: N802
                 parsed = urlparse(self.path)
                 if parsed.path == "/cover-letter":
                     self._handle_cover_letter_post()
+                    return
+                if parsed.path == "/candidate-feedback":
+                    self._handle_candidate_feedback_post()
                     return
                 self.send_error(404)
 
@@ -59,6 +66,18 @@ class DashboardServer:
                 _generate_cover_letter_for_row(row, settings, store)
                 self.send_response(303)
                 self.send_header("Location", f"/?selected={decision_id}")
+                self.end_headers()
+
+            def _handle_candidate_feedback_post(self) -> None:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                params = parse_qs(self.rfile.read(length).decode("utf-8"))
+                try:
+                    _record_candidate_feedback_from_params(store, params)
+                except ValueError as exc:
+                    self.send_error(400, str(exc))
+                    return
+                self.send_response(303)
+                self.send_header("Location", "/candidates?feedback=recorded")
                 self.end_headers()
 
             def log_message(self, format: str, *args: object) -> None:
@@ -131,7 +150,10 @@ def _render_index(store: DecisionStore, settings, params: dict[str, list[str]]) 
       <h1>Backstage Decisions</h1>
       <p>{_esc(settings.database_path)} · dry run {_bool_label(settings.dry_run)}</p>
     </div>
-    <a class="button" href="/">Reset</a>
+    <div class="header-actions">
+      <a class="button" href="/candidates">Candidates</a>
+      <a class="button" href="/">Reset</a>
+    </div>
   </header>
   <main>
     <form class="filters" method="get">
@@ -195,6 +217,154 @@ def _render_index(store: DecisionStore, settings, params: dict[str, list[str]]) 
   <script>{_JS}</script>
 </body>
 </html>"""
+
+
+def _render_candidates_index(store: DecisionStore, params: dict[str, list[str]]) -> str:
+    query = _param(params, "q")
+    band = _param(params, "band", "all")
+    rows = store.search_candidates(query=query, band=band, limit=200)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backstage Candidates</title>
+  <style>{_CSS}</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Backstage Candidates</h1>
+      <p>Ranked mutual-selection scores</p>
+    </div>
+    <a class="button" href="/">Decisions</a>
+  </header>
+  <main>
+    <form class="filters candidate-filters" method="get" action="/candidates">
+      <label>Search<input name="q" value="{_esc(query)}" placeholder="Title, score reason, notice text"></label>
+      <label>Band
+        <select name="band">
+          {_candidate_band_option("all", "All", band)}
+          {_candidate_band_option("top_priority", "Top Priority", band)}
+          {_candidate_band_option("strong_candidate", "Strong Candidate", band)}
+          {_candidate_band_option("maybe_review", "Maybe Review", band)}
+          {_candidate_band_option("low_priority", "Low Priority", band)}
+          {_candidate_band_option("not_worth_applying_today", "Not Worth Applying Today", band)}
+        </select>
+      </label>
+      <button type="submit">Search</button>
+    </form>
+    <section class="candidate-list" aria-label="Candidate rankings">
+      {_render_candidate_rows(rows)}
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def _candidate_band_option(value: str, label: str, current_value: str) -> str:
+    selected = " selected" if value == current_value else ""
+    return f'<option value="{_esc(value)}"{selected}>{_esc(label)}</option>'
+
+
+def _render_candidate_rows(rows) -> str:
+    if not rows:
+        return '<div class="empty candidate-empty">No candidates match the current filters.</div>'
+    return "\n".join(_render_candidate_row(row) for row in rows)
+
+
+def _render_candidate_row(row) -> str:
+    score = _json_dict(_row_value(row, "score_json")) or {}
+    positives = _string_items(score.get("positive_drivers"))
+    negatives = _string_items(score.get("negative_drivers"))
+    subscores = score.get("subscores") if isinstance(score.get("subscores"), dict) else {}
+    rank = _row_value(row, "rank_position")
+    rank_label = f"#{rank}" if rank else "Unranked"
+    return f"""
+    <article class="candidate-card">
+      <div class="row-top">
+        <div class="row-labels">
+          <span class="pill passed">{_esc(_humanize_score_band(_row_value(row, "score_band")))}</span>
+          {_draft_chip(row)}
+        </div>
+        <span class="score large">{int(_row_value(row, "overall_score") or 0)}</span>
+      </div>
+      <p class="meta">{_esc(rank_label)}</p>
+      <h2>{_esc(_row_value(row, "title") or "Untitled Candidate")}</h2>
+      {_candidate_subscores(subscores)}
+      <h3>Positive Drivers</h3>
+      {_list(positives) if positives else '<p class="muted">None recorded.</p>'}
+      <h3>Negative Drivers</h3>
+      {_list(negatives) if negatives else '<p class="muted">None recorded.</p>'}
+      <form class="feedback-form" method="post" action="/candidate-feedback">
+        <input type="hidden" name="candidate_id" value="{_esc(_row_value(row, "id"))}">
+        <label>Human score<input name="human_score" type="number" min="0" max="100" placeholder="45"></label>
+        <label>Affected component<input name="affected_components" placeholder="identity_match"></label>
+        <label>Failure mode<input name="failure_modes" placeholder="overweighted_signal"></label>
+        <label>Reason<input name="reason" placeholder="Nationality over-weighted."></label>
+        <button type="submit">Record Feedback</button>
+      </form>
+    </article>
+    """
+
+
+def _candidate_subscores(subscores: dict) -> str:
+    if not subscores:
+        return ""
+    items = "".join(
+        f"<li><span>{_esc(_humanize_score_band(str(key)))}</span><strong>{_esc(value)}</strong></li>"
+        for key, value in sorted(subscores.items())
+    )
+    return f'<ul class="subscores">{items}</ul>'
+
+
+def _draft_chip(row) -> str:
+    if _row_value(row, "draft_suggestion"):
+        return '<span class="pill hold">Draft suggested</span>'
+    return '<span class="pill muted-pill">No draft suggestion</span>'
+
+
+def _humanize_score_band(value: object) -> str:
+    return str(value or "unknown").replace("_", " ").strip().title()
+
+
+def _record_candidate_feedback_from_params(
+    store: DecisionStore,
+    params: dict[str, list[str]],
+) -> int:
+    try:
+        candidate_id = int(_param(params, "candidate_id"))
+        human_score = int(_param(params, "human_score"))
+    except ValueError as exc:
+        raise ValueError("candidate_id and human_score must be numeric") from exc
+    if not 0 <= human_score <= 100:
+        raise ValueError("human_score must be between 0 and 100")
+    candidate_row = _candidate_row_by_id(store, candidate_id)
+    feedback = HumanFeedback(
+        candidate_id=candidate_id,
+        agent_score=int(candidate_row["overall_score"]),
+        human_score=human_score,
+        affected_components=_required_csv("affected_components", _param(params, "affected_components")),
+        failure_modes=_required_csv("failure_modes", _param(params, "failure_modes")),
+        free_text_reason=_param(params, "reason").strip(),
+    )
+    if not feedback.free_text_reason:
+        raise ValueError("reason must be non-empty")
+    return store.record_candidate_feedback(feedback)
+
+
+def _candidate_row_by_id(store: DecisionStore, candidate_id: int):
+    for row in store.search_candidates(limit=1000000):
+        if row["id"] == candidate_id:
+            return row
+    raise ValueError(f"Candidate {candidate_id} was not found.")
+
+
+def _required_csv(field_name: str, value: str) -> list[str]:
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    if items:
+        return items
+    raise ValueError(f"{field_name} must include at least one non-empty value.")
 
 
 def _render_rows(rows, params: dict[str, list[str]], selected_id: str) -> str:
@@ -380,6 +550,12 @@ def _json_dict(value: str | None) -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def _string_items(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
 
 
 def _project_labels_from_row(row) -> list[str]:
@@ -796,6 +972,11 @@ main { padding: 14px 28px 28px; }
   font-weight: 700;
 }
 .method-tab.active strong { background: #cfeee7; color: var(--accent-dark); }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .filters {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) 260px 96px 84px 84px 78px;
@@ -803,6 +984,7 @@ main { padding: 14px 28px 28px; }
   align-items: end;
   margin-bottom: 10px;
 }
+.candidate-filters { grid-template-columns: minmax(240px, 1fr) 260px 96px; }
 label, .date-field { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
 .field-label { font-size: 13px; color: var(--muted); }
 input, select {
@@ -966,6 +1148,18 @@ button, .button, .shortcut-button {
   overflow-y: auto;
 }
 .detail { padding: 20px; }
+.candidate-list {
+  display: grid;
+  gap: 12px;
+}
+.candidate-card {
+  display: block;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.candidate-card h2 { margin-top: 6px; }
 .row {
   display: block;
   padding: 14px;
@@ -1024,8 +1218,39 @@ button, .button, .shortcut-button {
 .applied { background: var(--applied-bg); color: var(--applied-text); }
 .hold { background: var(--hold-bg); color: var(--hold-text); }
 .reject { background: var(--reject-bg); color: var(--reject-text); }
+.muted-pill { background: #eef1f5; color: #526071; }
 .score { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 700; }
 .score.large { font-size: 28px; color: var(--text); }
+.subscores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+.subscores li {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fbfcfd;
+}
+.subscores span { color: var(--muted); font-size: 12px; }
+.subscores strong { font-variant-numeric: tabular-nums; }
+.feedback-form {
+  display: grid;
+  grid-template-columns: 120px minmax(150px, 1fr) minmax(150px, 1fr) minmax(220px, 1.4fr) 150px;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
 ul { padding-left: 20px; }
 li { margin: 7px 0; line-height: 1.45; }
 dl {
@@ -1054,7 +1279,7 @@ pre {
 @media (max-width: 860px) {
   header { padding: 16px; align-items: flex-start; gap: 12px; }
   main { padding: 16px; }
-  .filters, .workspace { grid-template-columns: 1fr; }
+  .filters, .candidate-filters, .workspace, .feedback-form { grid-template-columns: 1fr; }
   .calendar-popover { width: min(286px, calc(100vw - 32px)); }
   .decision-toolbar, .toolbar-group { align-items: center; }
   .workspace { height: auto; min-height: 0; }

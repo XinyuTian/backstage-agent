@@ -1,13 +1,14 @@
 # Backstage Automation Agent
 
-A local-first, conservative automation agent for Backstage casting workflows. It scans recent Backstage notification emails, extracts casting projects and roles, screens them against an actor profile, stores decisions in SQLite, and prepares application drafts for promising matches.
+A local-first, conservative automation agent for Backstage casting workflows. It scans recent Backstage notification emails, extracts casting projects and roles, scores mutual-selection candidates against an actor profile, stores decisions in SQLite, and prepares application drafts for promising matches.
 
 The default workflow is intentionally safe:
 
 - scan the latest day of Backstage notification emails
 - run deterministic checks before spending LLM calls
+- always produce candidate scores and score traces instead of hiding opportunities behind a single filter
 - use a strict second-pass reviewer before applications
-- store decisions and application blockers for auditability
+- store decisions, candidate feedback, calibration proposals, and application blockers for auditability
 - keep `DRY_RUN=true` unless live submission is deliberately implemented and verified
 
 ## Quick Start
@@ -61,6 +62,9 @@ python3 -m backstage_agent.cli scan --limit 25 --days 1
 python3 -m backstage_agent.cli scan --limit 25 --date 2026-07-09
 python3 -m backstage_agent.cli parse-sample sample-email.html
 python3 -m backstage_agent.cli decisions
+python3 -m backstage_agent.cli candidates --limit 25
+python3 -m backstage_agent.cli candidate-feedback 13 --human-score 45 --affected-components identity_match --failure-modes overweighted_signal --reason "Nationality over-weighted."
+python3 -m backstage_agent.cli calibration-patterns
 python3 -m backstage_agent.cli show-config
 python3 -m backstage_agent.cli ui
 python3 -m backstage_agent.cli backstage-login
@@ -69,18 +73,23 @@ python3 -m backstage_agent.cli backstage-login-check
 
 `parse-sample` is useful for parser tuning before connecting a real inbox.
 
-The `ui` command starts a local dashboard at `http://127.0.0.1:8765` for searching and reviewing saved screening decisions.
+The `score-candidates --date YYYY-MM-DD` command runs mutual-selection scoring manually and preserves existing scores by default. Add `--overwrite` to delete and rebuild that date's scores. The `candidates` command lists ranked scores, `candidate-feedback` records a human correction, and `calibration-patterns` groups repeated taxonomy patterns into proposed scoring-rule changes.
+
+The `ui` command starts a local dashboard at `http://127.0.0.1:8765` for searching and reviewing saved screening decisions. Candidate rankings are available at `http://127.0.0.1:8765/candidates`.
 
 ## Workflow
 
 1. `scan` fetches recent Backstage emails through IMAP.
 2. The parser extracts project notices from each email.
 3. The agent optionally fetches Backstage project pages and extracts role, location, and date details.
-4. Project-level deterministic and LLM screening decide whether a project should proceed.
-5. A stricter reviewer independently approves, rejects, or holds the project gate.
-6. Approved projects proceed to role-level screening and review.
-7. Approved roles are recorded as application drafts or blocked attempts.
-8. The CLI prints a JSON summary and can send a macOS notification with `--notify`.
+4. Repeated projects and roles are refreshed in place from the newest digest/page data.
+5. Project-level deterministic and LLM screening gates the application-drafting path.
+6. A stricter reviewer independently approves, rejects, or holds the project gate.
+7. Approved projects proceed to role-level screening and review.
+8. Approved roles are recorded as application drafts or blocked attempts.
+9. Manual `score-candidates` runs candidate generation, feature extraction, local matching, deterministic scoring, and ranking from stored data.
+10. Human feedback can correct a candidate score and feed calibration proposals.
+11. The CLI prints JSON summaries and the daily scan can send a macOS notification with `--notify`.
 
 Application questions that require personal knowledge, such as swimming ability, wardrobe ownership, exact availability, or comfort with specific scenes, should pause for user confirmation unless the answer is already captured in the actor profile.
 
@@ -124,6 +133,19 @@ launchctl bootout gui/$(id -u)/com.sarahtxy.backstage-agent.daily 2>/dev/null ||
 launchctl bootstrap gui/$(id -u) "$PWD/launchd/com.sarahtxy.backstage-agent.daily.plist"
 ```
 
+The scheduled command runs selection only; candidate scoring is never invoked automatically.
+
+Run candidate scoring manually for an exact date:
+
+```bash
+# Preserve existing scores and score only missing candidates.
+.venv/bin/python -m backstage_agent.cli score-candidates --date 2026-07-15
+
+# Delete and rebuild existing scores for that date.
+.venv/bin/python -m backstage_agent.cli score-candidates --date 2026-07-15 --overwrite
+```
+
+The older `rescore-candidates --date YYYY-MM-DD` command remains an overwrite-mode compatibility alias.
 
 To rerun the daily job from scratch and overwrite the active SQLite database, first move the current database into `backups/`. The next scan will recreate `backstage_agent.sqlite3` and ignore prior saved decisions:
 
@@ -165,6 +187,6 @@ python3 -m pytest tests/test_parser.py tests/test_project_page_parser.py
 
 ## Project Status
 
-The repository contains the core local orchestration for email scanning, project and role parsing, two-layer screening, review, storage, dashboard review, dry-run application drafting, macOS notification, and daily scheduling assets.
+The repository contains the core local orchestration for email scanning, project and role parsing, candidate-first mutual-selection scoring, two-layer screening, review, storage, dashboard review, dry-run application drafting, macOS notification, and daily scheduling assets.
 
 Live Backstage submission is deliberately left as a guarded integration point. When `DRY_RUN=false`, application attempts are blocked until an account-specific browser flow is implemented and verified.

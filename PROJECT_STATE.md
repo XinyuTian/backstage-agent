@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-07-10
+Last updated: 2026-07-15
 
 This file represents the present state of the project. Edit it in place as functionality, priorities, blockers, or known issues change; do not use it as a historical log.
 
@@ -10,14 +10,18 @@ Build a conservative local automation agent that scans daily Backstage casting e
 
 ## Current Capabilities
 
-- CLI package `backstage-agent` / `python3 -m backstage_agent.cli` with commands for scanning, sample parsing, recent decisions, config display, dashboard serving, and persistent Backstage login checks.
+- CLI package `backstage-agent` / `python3 -m backstage_agent.cli` with commands for selection-only scanning, safe/overwrite manual candidate scoring, sample parsing, recent decisions, ranked candidates, candidate feedback, calibration proposals, config display, dashboard serving, and persistent Backstage login checks.
 - IMAP email ingestion in `src/backstage_agent/email_client.py`, defaulting to recent Backstage-related messages and supporting `--days` or an exact `--date`.
 - Email digest parsing in `src/backstage_agent/parser.py` and optional Backstage project-page parsing in `src/backstage_agent/project_page_parser.py`.
 - Two-layer screening flow in `src/backstage_agent/agent.py`: project gate, downgrade-only project review, role screening, downgrade-only role review, then application draft/blocker recording.
 - Deterministic local screening checks plus structured first-pass LLM screening and reviewer validation through OpenAI-compatible clients.
 - Five final decision buckets: `Auto Apply/Draft`, `Ready For Review`, `Needs My Preference`, `Reject`, and `Data/Parse Error`.
 - SQLite persistence in `src/backstage_agent/storage.py` for projects, roles, decisions, final buckets, structured classifier/reviewer artifacts, reviews, applications, keys, shooting locations, and shooting dates.
-- Local dashboard in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765` for searching decisions, final buckets, reviewer impact, status details, and on-demand role cover-letter drafts.
+- Explicit manual mutual-selection scoring that generates role and project-only candidates, extracts LLM features, matches local requirements, computes deterministic scores, stores ranked bands, and records draft suggestions without running during the daily scan.
+- Daily selection refreshes repeated project and role identities from the newest digest and Backstage page data instead of skipping previously stored projects.
+- Candidate-first storage in `src/backstage_agent/storage.py` for ranked candidates, structured feature and requirement-match payloads, human score feedback, feedback-pattern aggregation, and calibration proposals.
+- Human feedback capture for candidate score disagreement and calibration proposal generation, using reusable taxonomy fields instead of one-off prompt tweaks.
+- Local dashboard in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765` for searching decisions, final buckets, reviewer impact, status details, ranked candidates, candidate feedback form affordances, and on-demand role cover-letter drafts.
 - macOS notification helper in `src/backstage_agent/notifier.py` and daily launchd assets in `scripts/daily_scan.sh` and `launchd/com.sarahtxy.backstage-agent.daily.plist`.
 - Dry-run application drafting in `src/backstage_agent/application.py`, including guarded cover-note generation.
 
@@ -25,7 +29,9 @@ Build a conservative local automation agent that scans daily Backstage casting e
 
 - Parser and project-page extraction are being actively hardened against real Backstage digest/page variations.
 - The daily scan path is present and points at `/Users/sarahtxy/dev/backstage_agent`, with launchd retries at 9:00–12:00 when no Backstage email has arrived yet; operational reliability still depends on local machine setup, credentials, virtualenv state, and launchd installation.
-- Dashboard review exists for decisions, reviewer impact, and on-demand role cover-letter drafts, but broader application draft management and correction feedback workflows are still limited.
+- Dashboard review exists for decisions, reviewer impact, ranked candidates, candidate feedback form affordances, and on-demand role cover-letter drafts, but broader application draft management and full dashboard-backed correction submission are still limited.
+- Candidate persistence, CLI feedback capture, and calibration proposal storage now exist, but accepting/rejecting calibration proposals and automatically rewriting `scoring_rules.json` remain manual.
+
 
 
 ## Known Issues
@@ -43,7 +49,9 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - Keep dry-run safety until the Backstage application flow is verified end to end.
 - Continue adding parser and page-parser regression tests for every real-world parsing bug.
 - Preserve the split between screening/review status and application blockers in storage, dashboard, and summaries.
-- Keep project-level screening before role-level screening; role application drafting only runs for role decisions that remain `Auto Apply/Draft` after reviewer validation.
+- Keep candidate scoring explicit and manual; the daily selection scan must not invoke it.
+- Keep legacy project-level screening before role-level application drafting; role application drafting only runs for role decisions that remain `Auto Apply/Draft` after reviewer validation.
+- Keep candidate feedback taxonomy and calibration records auditable so repeated scoring mistakes can be aggregated across all tagged components and failure modes.
 - Reuse captured actor profile/application facts instead of asking the user again for known facts.
 
 ## Important Constraints

@@ -126,3 +126,22 @@ def test_scan_summary_includes_final_bucket_counts():
     summary = _scan_summary(result)
 
     assert "Buckets: 1 Auto Apply/Draft, 1 Ready For Review, 1 Needs My Preference" in summary
+
+
+def test_scan_summary_includes_candidate_counts():
+    result = ScanResult(
+        messages_seen=1,
+        projects_seen=1,
+        notices_seen=1,
+        project_decisions=[],
+        project_reviews=[],
+        decisions=[],
+        reviews=[],
+        applications=[],
+        candidates_scored=3,
+        draft_suggestions=2,
+    )
+
+    summary = _scan_summary(result)
+
+    assert "Candidates: 3 scored, 2 draft suggestions." in summary

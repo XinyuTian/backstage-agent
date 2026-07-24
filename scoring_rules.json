@@ -1,0 +1,45 @@
+{
+  "version": "2026-07-13-v1",
+  "component_weights": {
+    "their_requirements_match": 30,
+    "my_goal_alignment": 25,
+    "role_value": 15,
+    "project_value": 10,
+    "logistics": 10,
+    "compensation": 5,
+    "evidence_quality": 5
+  },
+  "bands": [
+    {"name": "top_priority", "min": 90, "max": 100},
+    {"name": "strong_candidate", "min": 75, "max": 89},
+    {"name": "maybe_review", "min": 60, "max": 74},
+    {"name": "low_priority", "min": 40, "max": 59},
+    {"name": "not_worth_applying_today", "min": 0, "max": 39}
+  ],
+  "score_caps": {
+    "mandatory_requirement_not_met": 15,
+    "hard_personal_boundary": 10,
+    "expired_or_unavailable": 20,
+    "project_gate_rejected": 35,
+    "project_review_blocked": 60,
+    "missing_critical_data": 60
+  },
+  "draft_suggestion_min_score": 90,
+  "rank_adjustment_cap": 5,
+  "known_requirements": {
+    "instagram_profile_share": {
+      "profile_attribute": "comfortable_with_active_instagram_tagging",
+      "met_values": ["true", "yes", "allowed", "comfortable"],
+      "points_when_met": 4
+    },
+    "language_mandarin": {
+      "profile_list": "skills",
+      "met_values": ["mandarin", "chinese"],
+      "points_when_met": 4
+    },
+    "union_status": {
+      "profile_attribute": "union_status",
+      "points_when_met": 3
+    }
+  }
+}

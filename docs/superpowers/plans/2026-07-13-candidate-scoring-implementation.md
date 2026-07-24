@@ -101,7 +101,7 @@ def test_project_only_candidate_has_no_role_id():
     assert candidate.candidate_type is CandidateType.PROJECT_ONLY
     assert candidate.source_role_id is None
     assert candidate.role_key == ""
-    assert candidate.notice.role == "__project_candidate__"
+    assert candidate.notice.role is None
 
 
 def test_candidate_score_clamps_to_band():
@@ -183,9 +183,6 @@ from enum import Enum
 from .models import CastingNotice
 
 
-PROJECT_ONLY_ROLE = "__project_candidate__"
-
-
 class CandidateType(str, Enum):
     ROLE = "role"
     PROJECT_ONLY = "project_only"
@@ -250,7 +247,7 @@ class CandidateInput:
             source_message_id=source_message_id,
             title=title,
             project=title,
-            role=PROJECT_ONLY_ROLE,
+            role=None,
             location=None,
             compensation=None,
             description=description,
@@ -410,7 +407,7 @@ git commit -m "feat: add candidate scoring domain models"
 - Test: `tests/test_candidate_generation.py`
 
 **Interfaces:**
-- Consumes: `CandidateInput` and `PROJECT_ONLY_ROLE` from `candidate_models.py`.
+- Consumes: `CandidateInput` from `candidate_models.py`.
 - Produces: `generate_candidates(project_id: int, project: ProjectNotice, stored_roles: list[tuple[int, CastingNotice]]) -> list[CandidateInput]`.
 
 - [ ] **Step 1: Write failing candidate generation tests**
@@ -419,7 +416,7 @@ Add `tests/test_candidate_generation.py`:
 
 ```python
 from backstage_agent.candidate_generation import generate_candidates
-from backstage_agent.candidate_models import CandidateType, PROJECT_ONLY_ROLE
+from backstage_agent.candidate_models import CandidateType
 from backstage_agent.models import CastingNotice, ProjectNotice
 
 
@@ -476,7 +473,7 @@ def test_generate_project_only_candidate_when_roles_are_missing():
     assert candidates[0].candidate_type is CandidateType.PROJECT_ONLY
     assert candidates[0].source_project_id == 11
     assert candidates[0].source_role_id is None
-    assert candidates[0].notice.role == PROJECT_ONLY_ROLE
+    assert candidates[0].notice.role is None
 
 
 def test_generate_project_only_candidate_when_roles_are_vague():
@@ -1259,8 +1256,8 @@ from __future__ import annotations
 import json
 
 from .candidate_models import CandidateFeatures, CandidateInput
-from .llm_client import make_chat_client
 from .models import ActorProfile
+from .screener import _llm_client
 from .settings import Settings
 
 
@@ -1271,7 +1268,7 @@ class FeatureExtractor:
     def __init__(self, settings: Settings, profile: ActorProfile):
         self.settings = settings
         self.profile = profile
-        self._client = make_chat_client(settings)
+        self._client = _llm_client(settings)
 
     def extract(self, candidate: CandidateInput) -> CandidateFeatures:
         data = self._request_features(candidate)
@@ -2603,4 +2600,3 @@ Expected: JSON array output. It may be empty on a fresh database, but the comman
 git add PROJECT_STATE.md CHANGELOG.md ARCHITECTURE.md docs/module-guide.md README.md
 git commit -m "docs: document candidate scoring workflow"
 ```
-
