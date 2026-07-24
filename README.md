@@ -10,6 +10,12 @@ The default workflow is scoring-first and intentionally safe:
 - preserve existing scores unless an overwrite is explicitly requested
 - store scores, candidate feedback, and calibration proposals for auditability
 
+## Scoring System
+
+Candidates are scored with LLM feature extraction plus local deterministic rules. The diagram below shows raw subscores, hard-constraint caps, score bands, and rank adjustments:
+
+![Mutual-selection scoring system: feature extraction, weighted subscores, hard caps, bands, and rank fine-tuning](docs/images/scoring-system.png)
+
 ## Quick Start
 
 ```bash
