@@ -103,6 +103,14 @@ class CandidateFeatures:
 
 
 @dataclass(frozen=True)
+class ScoringSnapshot:
+    version: str
+    component_maxima: dict[str, int]
+    cap_values: dict[str, int]
+    band_thresholds: dict[str, int]
+
+
+@dataclass(frozen=True)
 class RequirementMatch:
     requirement_key: str
     status: RequirementStatus
@@ -126,6 +134,7 @@ class CandidateScore:
     scoring_version: str
     rank_score: int | None = None
     rank_position: int | None = None
+    scoring_snapshot: ScoringSnapshot | None = None
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,20 @@ class HumanFeedback:
     @property
     def score_delta(self) -> int:
         return self.human_score - self.agent_score
+
+
+@dataclass(frozen=True)
+class CandidateComponentCorrection:
+    candidate_type: str
+    project_key: str
+    role_key: str
+    candidate_id_at_submission: int
+    component_name: str
+    agent_component_score: int
+    corrected_component_score: int
+    reason: str
+    scoring_version: str
+    component_max_at_correction: int
 
 
 @dataclass(frozen=True)

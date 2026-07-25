@@ -4,7 +4,13 @@ from backstage_agent.candidate_models import (
     RequirementStatus,
     ScoreBand,
 )
-from backstage_agent.scoring import load_scoring_rules, rank_candidates, score_candidate
+from backstage_agent.scoring import (
+    build_scoring_snapshot,
+    load_scoring_rules,
+    rank_candidates,
+    recompute_overall_from_subscores,
+    score_candidate,
+)
 
 
 def _features(**overrides):
@@ -39,6 +45,13 @@ def _rules():
             "expired_or_unavailable": 20,
             "missing_critical_data": 60,
         },
+        "bands": [
+            {"name": "top_priority", "min": 90, "max": 100},
+            {"name": "strong_candidate", "min": 75, "max": 89},
+            {"name": "maybe_review", "min": 60, "max": 74},
+            {"name": "low_priority", "min": 40, "max": 59},
+            {"name": "not_worth_applying_today", "min": 0, "max": 39},
+        ],
         "draft_suggestion_min_score": 90,
         "rank_adjustment_cap": 5,
     }
@@ -171,3 +184,35 @@ def test_load_scoring_rules_does_not_require_repo_cwd(tmp_path, monkeypatch):
 
     assert rules["version"]
     assert "component_weights" in rules
+
+
+def test_scoring_snapshot_resolves_weights_caps_and_bands():
+    rules = _rules()
+
+    snapshot = build_scoring_snapshot(rules)
+
+    assert snapshot.version == rules["version"]
+    assert snapshot.component_maxima == rules["component_weights"]
+    assert snapshot.cap_values == rules["score_caps"]
+    assert snapshot.band_thresholds["strong_candidate"] == 75
+
+
+def test_recompute_overall_applies_saved_caps_and_bands():
+    snapshot = build_scoring_snapshot(_rules())
+
+    overall, band = recompute_overall_from_subscores(
+        {"role_value": 60, "project_value": 30},
+        ["missing_critical_data"],
+        snapshot,
+    )
+
+    assert overall == 60
+    assert band is ScoreBand.MAYBE_REVIEW
+
+
+def test_score_candidate_persists_resolved_snapshot():
+    score = score_candidate(_features(), [], _rules())
+
+    assert score.scoring_snapshot is not None
+    assert score.scoring_snapshot.version == "test-v1"
+    assert score.scoring_snapshot.component_maxima["role_value"] == 15

@@ -8,7 +8,7 @@ from typing import Any
 
 from .agent import BackstageAgent
 from .browser_session import BrowserSessionError, check_backstage_login, open_backstage_login
-from .calibration import build_calibration_proposals
+from .calibration import build_calibration_proposals, merge_calibration_patterns
 from .candidate_models import HumanFeedback
 from .models import EmailMessage
 from .notifier import send_mac_notification
@@ -213,7 +213,10 @@ def _record_feedback_from_args(store: DecisionStore, args: Any) -> int:
 def _calibration_patterns() -> None:
     settings = load_settings()
     store = DecisionStore(settings.database_path)
-    proposals = build_calibration_proposals(store.feedback_patterns())
+    patterns = merge_calibration_patterns(
+        [store.feedback_patterns(), store.correction_patterns()]
+    )
+    proposals = build_calibration_proposals(patterns)
     for proposal in proposals:
         store.record_calibration_proposal(proposal)
     print(

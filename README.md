@@ -76,7 +76,7 @@ python3 -m backstage_agent.cli backstage-login-check
 
 The daily `scan` command runs mutual-selection scoring automatically and preserves existing scores by default. The `score-candidates --date YYYY-MM-DD` command remains available for an explicit follow-up; add `--overwrite` only to intentionally delete and rebuild that date's scores. The `candidates` command lists ranked scores, `candidate-feedback` records a human correction, and `calibration-patterns` groups repeated taxonomy patterns into proposed scoring-rule changes.
 
-The `ui` command starts the candidate dashboard at `http://127.0.0.1:8765/candidates`; the root URL redirects there.
+The `ui` command starts the score-review workbench at `http://127.0.0.1:8765/candidates`; the root URL redirects there. Select a candidate, compare extracted evidence with agent component scores, then save or reset an optional correction for one component. Corrections update the displayed Overall, band, and color without changing the official candidate score, rank, caps, or draft suggestion.
 
 ## Workflow
 
@@ -87,7 +87,7 @@ The `ui` command starts the candidate dashboard at `http://127.0.0.1:8765/candid
 5. `scan` generates role or project-only candidates from the refreshed records.
 6. It extracts structured features, matches requirements locally, calculates deterministic scores, and ranks the date's candidates.
 7. Existing candidate identities are preserved and reported as skipped.
-8. Human feedback can correct a candidate score and feed calibration proposals.
+8. Current component corrections overlay dashboard scores and feed calibration proposals once per candidate/component; the existing coarse CLI feedback path remains available.
 9. The CLI prints a scoring-oriented JSON summary and the daily scan can send a macOS notification with `--notify`.
 
 Legacy screening, review, application drafting, decision CLI, and decision dashboard code have been removed. Old `decisions` and `applications` rows may remain in existing SQLite databases, but the application no longer reads or writes them.

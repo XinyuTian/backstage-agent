@@ -6,6 +6,8 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Added
 
+- Added resolved scoring snapshots and a single production/display recomputation path for component totals, caps, and bands.
+- Added stable per-candidate/component corrections with optional reasons, overwrite-in-place semantics, Reset, stale-version Reconfirm, and current-correction calibration patterns.
 - Introduced lightweight repository documentation for future coding agents, including project state, architecture, module guide, and agent workflow instructions.
 - Added a role-selection decision core with five final buckets, structured first-pass LLM output validation, downgrade-only reviewer validation, reusable `screening_rules.json`, and tests.
 - Persisted structured classifier/reviewer artifacts, final bucket, reviewer impact, and schema errors on decision rows.
@@ -16,6 +18,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Changed
 
+- Replaced the candidate card wall with an English left-list/right-detail score-review workbench that overlays corrections without mutating official candidate rows.
 - Added the mutual-selection scoring-system diagram to `README.md`.
 - Made `scan` the scoring-first daily workflow: it refreshes projects and roles, scores and ranks candidates for the scan date, preserves existing scores by default, and no longer invokes legacy screening, review, or application drafting. Legacy data, dashboard views, and compatibility code remain available.
 - Daily automation retries the selection scan at 9:00, 10:00, 11:00, and 12:00 when no Backstage email is seen yet; the shell notifies on success or after the final noon miss, tracks per-day state in `logs/daily-scan-state.json`, and no longer passes `--notify` to the scan CLI.

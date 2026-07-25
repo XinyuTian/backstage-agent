@@ -11,6 +11,7 @@ from .candidate_models import (
     RequirementMatch,
     RequirementStatus,
     ScoreBand,
+    ScoringSnapshot,
 )
 
 _NO_REQUIREMENTS_BASELINE_FRACTION = 0.5
@@ -48,13 +49,12 @@ def score_candidate(
         "compensation": _compensation_score(features, weights["compensation"]),
         "evidence_quality": _evidence_score(features, weights["evidence_quality"]),
     }
-    raw_score = sum(subscores.values())
     caps = _score_caps(features, matches)
-    capped_score = min([raw_score, *[_cap_value(cap, rules) for cap in caps]]) if caps else raw_score
-    overall = max(0, min(100, int(round(capped_score))))
+    snapshot = build_scoring_snapshot(rules)
+    overall, band = recompute_overall_from_subscores(subscores, caps, snapshot)
     return CandidateScore(
         overall_score=overall,
-        score_band=_band_for_score(overall),
+        score_band=band,
         subscores=subscores,
         score_caps=caps,
         positive_drivers=_positive_drivers(features, matches),
@@ -62,7 +62,42 @@ def score_candidate(
         score_trace=_score_trace(features, matches, requirement_trace),
         draft_suggestion=overall >= int(rules.get("draft_suggestion_min_score", 90)),
         scoring_version=str(rules["version"]),
+        scoring_snapshot=snapshot,
     )
+
+
+def build_scoring_snapshot(rules: dict) -> ScoringSnapshot:
+    return ScoringSnapshot(
+        version=str(rules["version"]),
+        component_maxima={
+            str(name): int(value)
+            for name, value in rules["component_weights"].items()
+        },
+        cap_values={
+            str(name): int(value)
+            for name, value in rules["score_caps"].items()
+        },
+        band_thresholds={
+            str(band["name"]): int(band["min"])
+            for band in rules["bands"]
+        },
+    )
+
+
+def recompute_overall_from_subscores(
+    subscores: dict[str, int],
+    score_caps: list[str],
+    snapshot: ScoringSnapshot,
+) -> tuple[int, ScoreBand]:
+    raw_score = sum(int(value) for value in subscores.values())
+    resolved_caps = [
+        snapshot.cap_values[cap]
+        for cap in score_caps
+        if cap in snapshot.cap_values
+    ]
+    capped_score = min([raw_score, *resolved_caps]) if resolved_caps else raw_score
+    overall = max(0, min(100, int(round(capped_score))))
+    return overall, _band_for_score(overall, snapshot.band_thresholds)
 
 
 def rank_candidates(scores: list[CandidateScore], rules: dict) -> list[CandidateScore]:
@@ -218,14 +253,14 @@ def _cap_value(cap: str, rules: dict) -> int:
     return int(rules["score_caps"][cap])
 
 
-def _band_for_score(score: int) -> ScoreBand:
-    if score >= 90:
+def _band_for_score(score: int, thresholds: dict[str, int]) -> ScoreBand:
+    if score >= thresholds["top_priority"]:
         return ScoreBand.TOP_PRIORITY
-    if score >= 75:
+    if score >= thresholds["strong_candidate"]:
         return ScoreBand.STRONG_CANDIDATE
-    if score >= 60:
+    if score >= thresholds["maybe_review"]:
         return ScoreBand.MAYBE_REVIEW
-    if score >= 40:
+    if score >= thresholds["low_priority"]:
         return ScoreBand.LOW_PRIORITY
     return ScoreBand.NOT_WORTH_APPLYING_TODAY
 

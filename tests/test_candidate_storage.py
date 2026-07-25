@@ -6,12 +6,14 @@ from datetime import date
 from backstage_agent.candidate_models import (
     CalibrationProposal,
     CandidateFeatures,
+    CandidateComponentCorrection,
     CandidateInput,
     CandidateScore,
     HumanFeedback,
     RequirementMatch,
     RequirementStatus,
     ScoreBand,
+    ScoringSnapshot,
 )
 from backstage_agent.models import ProjectNotice
 from backstage_agent.storage import DecisionStore
@@ -117,6 +119,211 @@ def test_record_and_search_candidate(tmp_path, casting_notice_factory):
         json.loads(rows[0]["requirement_match_json"])[0]["requirement_key"]
         == "instagram_profile_share"
     )
+
+
+def test_component_correction_upsert_replaces_only_matching_component(
+    tmp_path,
+    casting_notice_factory,
+):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    candidate = CandidateInput.role_candidate(
+        project_id=1,
+        role_id=2,
+        project_key="project",
+        role_key="role",
+        title="Play - Lead",
+        notice=casting_notice_factory(),
+    )
+    candidate_id = store.record_candidate(candidate, _features(), [_match()], _score())
+
+    def correction(component, corrected, reason=""):
+        return CandidateComponentCorrection(
+            candidate_type="role",
+            project_key="project",
+            role_key="role",
+            candidate_id_at_submission=candidate_id,
+            component_name=component,
+            agent_component_score=15 if component == "role_value" else 8,
+            corrected_component_score=corrected,
+            reason=reason,
+            scoring_version="test-v1",
+            component_max_at_correction=15 if component == "role_value" else 10,
+        )
+
+    first_id = store.upsert_candidate_correction(
+        correction("role_value", 10, "Too generous")
+    )
+    second_id = store.upsert_candidate_correction(
+        correction("role_value", 8, "Final value")
+    )
+    store.upsert_candidate_correction(correction("logistics", 6))
+
+    key = ("role", "project", "role")
+    rows = store.corrections_for_candidate_keys([key])[key]
+
+    assert second_id == first_id
+    assert {
+        (row["component_name"], row["corrected_component_score"])
+        for row in rows
+    } == {("role_value", 8), ("logistics", 6)}
+    assert next(
+        row for row in rows if row["component_name"] == "role_value"
+    )["reason"] == "Final value"
+
+
+def test_component_correction_reset_removes_only_matching_component(
+    tmp_path,
+    casting_notice_factory,
+):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    candidate_id = store.record_candidate(
+        CandidateInput.project_only_candidate(
+            project_id=1,
+            project_key="project",
+            title="Project",
+            source_message_id="m1",
+            description="Description",
+            application_url=None,
+        ),
+        _features(),
+        [],
+        _score(),
+    )
+    for component in ("role_value", "logistics"):
+        store.upsert_candidate_correction(
+            CandidateComponentCorrection(
+                candidate_type="project_only",
+                project_key="project",
+                role_key="",
+                candidate_id_at_submission=candidate_id,
+                component_name=component,
+                agent_component_score=10,
+                corrected_component_score=7,
+                reason="",
+                scoring_version="test-v1",
+                component_max_at_correction=15,
+            )
+        )
+
+    assert store.delete_candidate_correction(
+        "project_only", "project", "", "role_value"
+    )
+    rows = store.corrections_for_candidate_keys(
+        [("project_only", "project", "")]
+    )[("project_only", "project", "")]
+
+    assert [row["component_name"] for row in rows] == ["logistics"]
+
+
+def test_workbench_rows_use_effective_project_date_order(
+    tmp_path,
+    casting_notice_factory,
+):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    for title, key, seen_date, score_value in (
+        ("Old", "old-project", date(2026, 7, 20), 95),
+        ("New", "new-project", date(2026, 7, 24), 45),
+    ):
+        project_id = store.upsert_project(
+            ProjectNotice(
+                source_message_id=key,
+                title=title,
+                project_url=f"https://example.com/{key}",
+                description=title,
+                raw_text=title,
+                project_date=seen_date,
+                project_key=key,
+            ),
+            seen_date=seen_date,
+        )
+        candidate = CandidateInput.project_only_candidate(
+            project_id=project_id,
+            project_key=key,
+            title=title,
+            source_message_id=key,
+            description=title,
+            application_url=None,
+        )
+        store.record_candidate(
+            candidate,
+            _features(),
+            [],
+            replace(_score(), overall_score=score_value),
+        )
+
+    rows = store.search_candidate_workbench_rows()
+
+    assert [row["project_key"] for row in rows] == ["new-project", "old-project"]
+    assert rows[0]["effective_project_date"] == "2026-07-24"
+
+
+def test_correction_patterns_count_only_latest_component_value(
+    tmp_path,
+    casting_notice_factory,
+):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    snapshot = ScoringSnapshot(
+        version="test-v1",
+        component_maxima={"role_value": 15},
+        cap_values={},
+        band_thresholds={
+            "top_priority": 90,
+            "strong_candidate": 75,
+            "maybe_review": 60,
+            "low_priority": 40,
+        },
+    )
+    for index, corrected in ((1, 8), (2, 13)):
+        project_key = f"project-{index}"
+        role_key = f"role-{index}"
+        candidate_id = store.record_candidate(
+            CandidateInput.role_candidate(
+                project_id=index,
+                role_id=index,
+                project_key=project_key,
+                role_key=role_key,
+                title=f"Role {index}",
+                notice=casting_notice_factory(),
+            ),
+            _features(),
+            [],
+            replace(_score(), scoring_snapshot=snapshot),
+        )
+        store.upsert_candidate_correction(
+            CandidateComponentCorrection(
+                candidate_type="role",
+                project_key=project_key,
+                role_key=role_key,
+                candidate_id_at_submission=candidate_id,
+                component_name="role_value",
+                agent_component_score=15,
+                corrected_component_score=corrected,
+                reason="",
+                scoring_version="test-v1",
+                component_max_at_correction=15,
+            )
+        )
+        if index == 1:
+            store.upsert_candidate_correction(
+                CandidateComponentCorrection(
+                    candidate_type="role",
+                    project_key=project_key,
+                    role_key=role_key,
+                    candidate_id_at_submission=candidate_id,
+                    component_name="role_value",
+                    agent_component_score=15,
+                    corrected_component_score=10,
+                    reason="Final",
+                    scoring_version="test-v1",
+                    component_max_at_correction=15,
+                )
+            )
+
+    patterns = store.correction_patterns(min_examples=2)
+
+    assert patterns[0]["affected_component"] == "role_value"
+    assert patterns[0]["example_count"] == 2
+    assert patterns[0]["average_delta"] == -3.5
 
 
 def test_feedback_patterns_group_taxonomy(tmp_path, casting_notice_factory):

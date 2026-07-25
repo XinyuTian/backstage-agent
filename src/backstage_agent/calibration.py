@@ -3,6 +3,46 @@ from __future__ import annotations
 from .candidate_models import CalibrationProposal
 
 
+def merge_calibration_patterns(pattern_groups: list[list]) -> list[dict]:
+    totals: dict[tuple[str, str], dict[str, float | int | str]] = {}
+    for patterns in pattern_groups:
+        for row in patterns:
+            component = str(row["affected_component"])
+            failure_mode = str(row["failure_mode"])
+            count = int(row["example_count"])
+            key = (component, failure_mode)
+            total = totals.setdefault(
+                key,
+                {
+                    "affected_component": component,
+                    "failure_mode": failure_mode,
+                    "example_count": 0,
+                    "weighted_delta": 0.0,
+                },
+            )
+            total["example_count"] = int(total["example_count"]) + count
+            total["weighted_delta"] = float(total["weighted_delta"]) + (
+                float(row["average_delta"]) * count
+            )
+
+    merged = []
+    for total in totals.values():
+        count = int(total["example_count"])
+        merged.append(
+            {
+                "affected_component": total["affected_component"],
+                "failure_mode": total["failure_mode"],
+                "example_count": count,
+                "average_delta": float(total["weighted_delta"]) / count,
+            }
+        )
+    return sorted(
+        merged,
+        key=lambda row: (abs(row["average_delta"]), row["example_count"]),
+        reverse=True,
+    )
+
+
 def build_calibration_proposals(patterns: list) -> list[CalibrationProposal]:
     proposals = []
     for row in patterns:

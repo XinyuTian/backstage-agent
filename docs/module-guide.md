@@ -29,16 +29,16 @@ Use this guide to choose the smallest set of files to read for a task.
 - Use `src/backstage_agent/candidate_generation.py` for role and project-only candidates from parsed projects and roles.
 - Use `src/backstage_agent/feature_extractor.py` for structured LLM feature extraction that returns facts only, not scores.
 - Use `src/backstage_agent/requirement_matcher.py` for local requirement matching against stored actor facts.
-- Use `src/backstage_agent/scoring.py` for deterministic scores, bands, caps, traces, draft suggestions, and ranking.
-- Use `src/backstage_agent/calibration.py` for turning repeated feedback patterns into scoring-rule proposals.
+- Use `src/backstage_agent/scoring.py` for deterministic scores, resolved scoring snapshots, shared corrected-overall recomputation, bands, caps, traces, draft suggestions, and ranking.
+- Use `src/backstage_agent/calibration.py` for merging legacy feedback and current component-correction patterns into scoring-rule proposals.
 - Relevant tests: `tests/test_candidate_models.py`, `tests/test_candidate_generation.py`, `tests/test_feature_extractor.py`, `tests/test_requirement_matcher.py`, `tests/test_candidate_scoring.py`, `tests/test_agent_candidate_scoring.py`, `tests/test_candidate_storage.py`, `tests/test_cli_candidates.py`, `tests/test_ui_candidates.py`, and `tests/test_calibration.py`.
 
 ## Storage And Dashboard
 
 - Start with `src/backstage_agent/storage.py` for SQLite schema, persistence, search filters, status counts, and lightweight migrations.
-- Use `src/backstage_agent/ui.py` for dashboard rendering, filters, status labels, candidate rankings, candidate feedback form affordances, and application blocker display.
+- Use `src/backstage_agent/ui.py` for workbench rendering, component correction merge/validation, stale-version handling, independent Save/Reset/Reconfirm actions, and corrected score preview.
 - Existing legacy decision/application rows are inert and have no runtime readers or writers.
-- Candidate rows include score JSON, feature JSON, requirement-match JSON, ranked band, rank position, and draft-suggestion fields.
+- Candidate rows include score JSON with resolved scoring snapshots, feature JSON, requirement-match JSON, ranked band, rank position, and draft-suggestion fields. Current corrections live separately in `candidate_score_corrections` under stable candidate/component identities.
 - Relevant tests: `tests/test_storage_dashboard.py`, `tests/test_candidate_storage.py`, `tests/test_ui_labels.py`, `tests/test_ui_candidates.py`.
 
 ## Backstage Browser Access

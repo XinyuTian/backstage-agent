@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .candidate_models import (
     CalibrationProposal,
+    CandidateComponentCorrection,
     CandidateFeatures,
     CandidateInput,
     CandidateScore,
@@ -337,6 +338,47 @@ class DecisionStore:
                 )
             )
 
+    def search_candidate_workbench_rows(
+        self,
+        query: str = "",
+        band: str = "all",
+        limit: int = 200,
+    ) -> list[sqlite3.Row]:
+        clauses = []
+        params: list[object] = []
+        if query:
+            clauses.append(
+                "(lower(c.title) LIKE lower(?) OR lower(c.notice_json) LIKE lower(?))"
+            )
+            params.extend([f"%{query}%", f"%{query}%"])
+        if band != "all":
+            clauses.append("c.score_band = ?")
+            params.append(band)
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return list(
+                conn.execute(
+                    f"""
+                    SELECT
+                      c.*,
+                      p.last_seen_date,
+                      p.project_date AS source_project_date,
+                      date(COALESCE(p.last_seen_date, p.project_date, p.created_at))
+                        AS effective_project_date
+                    FROM candidates AS c
+                    JOIN projects AS p ON p.id = c.source_project_id
+                    {where}
+                    ORDER BY
+                      date(COALESCE(p.last_seen_date, p.project_date, p.created_at)) DESC,
+                      c.id DESC
+                    LIMIT ?
+                    """,
+                    params,
+                )
+            )
+
     def candidate_rescore_sources_for_date(
         self,
         target_date: str,
@@ -442,6 +484,110 @@ class DecisionStore:
             )
             return int(cursor.lastrowid)
 
+    def upsert_candidate_correction(
+        self,
+        correction: CandidateComponentCorrection,
+    ) -> int:
+        role_key = correction.role_key or ""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO candidate_score_corrections (
+                  candidate_type, project_key, role_key,
+                  candidate_id_at_submission, component_name,
+                  agent_component_score, corrected_component_score,
+                  reason, scoring_version, component_max_at_correction
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_type, project_key, role_key, component_name)
+                DO UPDATE SET
+                  candidate_id_at_submission = excluded.candidate_id_at_submission,
+                  agent_component_score = excluded.agent_component_score,
+                  corrected_component_score = excluded.corrected_component_score,
+                  reason = excluded.reason,
+                  scoring_version = excluded.scoring_version,
+                  component_max_at_correction = excluded.component_max_at_correction,
+                  updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    correction.candidate_type,
+                    correction.project_key,
+                    role_key,
+                    correction.candidate_id_at_submission,
+                    correction.component_name,
+                    correction.agent_component_score,
+                    correction.corrected_component_score,
+                    correction.reason,
+                    correction.scoring_version,
+                    correction.component_max_at_correction,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT id
+                FROM candidate_score_corrections
+                WHERE candidate_type = ? AND project_key = ?
+                  AND role_key = ? AND component_name = ?
+                """,
+                (
+                    correction.candidate_type,
+                    correction.project_key,
+                    role_key,
+                    correction.component_name,
+                ),
+            ).fetchone()
+            return int(row[0])
+
+    def delete_candidate_correction(
+        self,
+        candidate_type: str,
+        project_key: str,
+        role_key: str,
+        component_name: str,
+    ) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM candidate_score_corrections
+                WHERE candidate_type = ? AND project_key = ?
+                  AND role_key = ? AND component_name = ?
+                """,
+                (candidate_type, project_key, role_key or "", component_name),
+            )
+            return cursor.rowcount > 0
+
+    def corrections_for_candidate_keys(
+        self,
+        keys: list[tuple[str, str, str]],
+    ) -> dict[tuple[str, str, str], list[sqlite3.Row]]:
+        normalized = [
+            (candidate_type, project_key, role_key or "")
+            for candidate_type, project_key, role_key in keys
+        ]
+        result = {key: [] for key in normalized}
+        if not normalized:
+            return result
+        clauses = " OR ".join(
+            "(candidate_type = ? AND project_key = ? AND role_key = ?)"
+            for _ in normalized
+        )
+        params = [value for key in normalized for value in key]
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM candidate_score_corrections
+                WHERE {clauses}
+                ORDER BY component_name
+                """,
+                params,
+            ).fetchall()
+        for row in rows:
+            key = (row["candidate_type"], row["project_key"], row["role_key"])
+            result[key].append(row)
+        return result
+
     def feedback_patterns(self, min_examples: int = 2) -> list[sqlite3.Row]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -463,6 +609,52 @@ class DecisionStore:
                     GROUP BY affected_component, failure_mode
                     HAVING COUNT(*) >= ?
                     ORDER BY ABS(AVG(candidate_feedback.score_delta)) DESC, COUNT(*) DESC
+                    """,
+                    (min_examples,),
+                )
+            )
+
+    def correction_patterns(self, min_examples: int = 2) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return list(
+                conn.execute(
+                    """
+                    SELECT
+                      correction.component_name AS affected_component,
+                      'subscore_override' AS failure_mode,
+                      COUNT(*) AS example_count,
+                      AVG(
+                        correction.corrected_component_score
+                        - correction.agent_component_score
+                      ) AS average_delta
+                    FROM candidate_score_corrections AS correction
+                    JOIN candidates AS candidate
+                      ON candidate.candidate_type = correction.candidate_type
+                     AND candidate.project_key = correction.project_key
+                     AND COALESCE(candidate.role_key, '') = correction.role_key
+                    WHERE candidate.id = (
+                      SELECT MAX(newest.id)
+                      FROM candidates AS newest
+                      WHERE newest.candidate_type = correction.candidate_type
+                        AND newest.project_key = correction.project_key
+                        AND COALESCE(newest.role_key, '') = correction.role_key
+                    )
+                      AND CAST(
+                        json_extract(
+                          candidate.score_json,
+                          '$.scoring_snapshot.component_maxima.'
+                            || correction.component_name
+                        ) AS INTEGER
+                      ) = correction.component_max_at_correction
+                    GROUP BY correction.component_name
+                    HAVING COUNT(*) >= ?
+                    ORDER BY
+                      ABS(AVG(
+                        correction.corrected_component_score
+                        - correction.agent_component_score
+                      )) DESC,
+                      COUNT(*) DESC
                     """,
                     (min_examples,),
                 )
@@ -604,6 +796,22 @@ class DecisionStore:
                   calibration_status TEXT NOT NULL,
                   FOREIGN KEY(candidate_id) REFERENCES candidates(id)
                 );
+                CREATE TABLE IF NOT EXISTS candidate_score_corrections (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                  candidate_type TEXT NOT NULL,
+                  project_key TEXT NOT NULL,
+                  role_key TEXT NOT NULL DEFAULT '',
+                  candidate_id_at_submission INTEGER NOT NULL,
+                  component_name TEXT NOT NULL,
+                  agent_component_score INTEGER NOT NULL,
+                  corrected_component_score INTEGER NOT NULL,
+                  reason TEXT NOT NULL DEFAULT '',
+                  scoring_version TEXT NOT NULL,
+                  component_max_at_correction INTEGER NOT NULL,
+                  UNIQUE(candidate_type, project_key, role_key, component_name)
+                );
                 CREATE TABLE IF NOT EXISTS calibration_proposals (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -683,6 +891,12 @@ class DecisionStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_score ON candidates(overall_score)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_candidates_band ON candidates(score_band)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_candidate_feedback_candidate ON candidate_feedback(candidate_id)")
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_candidate_score_corrections_identity
+                ON candidate_score_corrections(candidate_type, project_key, role_key)
+                """
+            )
 
 
 def _backfill_keys(conn: sqlite3.Connection) -> None:
