@@ -425,6 +425,10 @@ def _render_workbench(
     return f"""
     <section class="score-workbench">
       <nav class="candidate-list" aria-label="Candidates">{candidates}</nav>
+      <div class="workbench-divider" role="separator"
+        aria-orientation="vertical" aria-label="Resize candidate panels"
+        aria-valuemin="220" aria-valuenow="220" aria-valuemax="220"
+        tabindex="0"></div>
       <section class="candidate-detail">
         {_render_candidate_detail(selected, query, band, date_end, days)}
       </section>
@@ -824,8 +828,10 @@ input, select, button { border: 1px solid #b9b3a7; border-radius: 7px; padding: 
 button, .date-nav { background: #284d3d; color: white; cursor: pointer; }
 button.secondary { background: white; color: #31443b; }
 .date-nav { border: 1px solid #b9b3a7; border-radius: 7px; padding: 8px 10px; font: inherit; text-decoration: none; }
-.score-workbench { height: calc(100vh - 132px); min-height: 570px; display: grid; grid-template-columns: minmax(250px, 29%) minmax(0, 71%); overflow: hidden; background: white; border: 1px solid #d8d2c7; }
+.score-workbench { --candidate-list-width: 22%; height: calc(100vh - 132px); min-height: 570px; display: grid; grid-template-columns: minmax(220px, var(--candidate-list-width)) 6px minmax(480px, 1fr); overflow: hidden; background: white; border: 1px solid #d8d2c7; }
 .candidate-list { overflow-y: auto; border-right: 1px solid #ddd7cc; background: #faf8f3; }
+.workbench-divider { cursor: col-resize; touch-action: none; }
+.workbench-divider.active { background: #8fa99d; }
 .candidate-list-item { display: flex; gap: 12px; padding: 14px; color: inherit; text-decoration: none; border-bottom: 1px solid #e5dfd5; border-left: 4px solid transparent; }
 .candidate-list-item.selected { background: white; border-left-color: #315a48; }
 .list-score { width: 46px; height: 46px; display: grid; place-items: center; border-radius: 12px; font-size: 20px; font-weight: 800; background: #ebe7dd; }
@@ -864,6 +870,7 @@ ul { margin: 6px 0; padding-left: 20px; }
   header, main { padding-left: 14px; padding-right: 14px; }
   .filters { align-items: stretch; flex-direction: column; }
   .score-workbench { height: auto; grid-template-columns: 1fr; overflow: visible; }
+  .workbench-divider { display: none; }
   .candidate-list { max-height: 280px; border-right: 0; border-bottom: 1px solid #ddd7cc; }
   .candidate-detail { display: block; overflow: visible; }
   .evidence-pane, .score-pane { max-height: none; overflow: auto; }
@@ -873,6 +880,97 @@ ul { margin: 6px 0; padding-left: 20px; }
 
 
 _JS = """
+document.querySelectorAll('.score-workbench').forEach((workbench) => {
+  const divider = workbench.querySelector('.workbench-divider');
+  const candidateList = workbench.querySelector('.candidate-list');
+  const minimumLeft = 220;
+  const minimumRight = 480;
+  let activePointer = null;
+  let userAdjusted = false;
+  let adjustedLeftWidth = null;
+
+  const bounds = () => {
+    const rect = workbench.getBoundingClientRect();
+    const contentWidth = workbench.clientWidth;
+    const maximumLeft = Math.max(
+      minimumLeft,
+      contentWidth - minimumRight - divider.offsetWidth
+    );
+    divider.setAttribute('aria-valuemax', String(Math.round(maximumLeft)));
+    return {rect, maximumLeft};
+  };
+  const setLeftWidth = (width) => {
+    const {maximumLeft} = bounds();
+    const leftWidth = Math.round(
+      Math.min(maximumLeft, Math.max(minimumLeft, width))
+    );
+    workbench.style.setProperty('--candidate-list-width', `${leftWidth}px`);
+    divider.setAttribute('aria-valuenow', String(leftWidth));
+    return leftWidth;
+  };
+  const synchronizeDivider = () => {
+    const {maximumLeft} = bounds();
+    if (window.matchMedia('(max-width: 800px)').matches) {
+      const current = userAdjusted
+        ? adjustedLeftWidth
+        : candidateList.getBoundingClientRect().width;
+      divider.setAttribute(
+        'aria-valuenow',
+        String(Math.round(Math.min(maximumLeft, Math.max(minimumLeft, current))))
+      );
+      return;
+    }
+    if (userAdjusted) {
+      adjustedLeftWidth = setLeftWidth(adjustedLeftWidth);
+      return;
+    }
+    workbench.style.removeProperty('--candidate-list-width');
+    const defaultWidth = candidateList.getBoundingClientRect().width;
+    divider.setAttribute(
+      'aria-valuenow',
+      String(Math.round(
+        Math.min(maximumLeft, Math.max(minimumLeft, defaultWidth))
+      ))
+    );
+  };
+  const finishResize = (event) => {
+    if (activePointer !== event.pointerId) return;
+    divider.classList.remove('active');
+    activePointer = null;
+  };
+
+  synchronizeDivider();
+  const resizeObserver = new ResizeObserver(synchronizeDivider);
+  resizeObserver.observe(workbench);
+  divider.addEventListener('pointerdown', (event) => {
+    activePointer = event.pointerId;
+    divider.setPointerCapture(event.pointerId);
+    divider.classList.add('active');
+  });
+  divider.addEventListener('pointermove', (event) => {
+    if (activePointer !== event.pointerId) return;
+    const {rect} = bounds();
+    userAdjusted = true;
+    adjustedLeftWidth = setLeftWidth(event.clientX - rect.left);
+  });
+  divider.addEventListener('pointerup', finishResize);
+  divider.addEventListener('pointercancel', finishResize);
+  divider.addEventListener('lostpointercapture', finishResize);
+  divider.addEventListener('keydown', (event) => {
+    const {maximumLeft} = bounds();
+    const current = Number(divider.getAttribute('aria-valuenow'));
+    let next;
+    if (event.key === 'ArrowLeft') next = current - 16;
+    else if (event.key === 'ArrowRight') next = current + 16;
+    else if (event.key === "Home") next = minimumLeft;
+    else if (event.key === "End") next = maximumLeft;
+    else return;
+    event.preventDefault();
+    userAdjusted = true;
+    adjustedLeftWidth = setLeftWidth(next);
+  });
+});
+
 document.querySelectorAll('.score-pane').forEach((pane) => {
   const agent = JSON.parse(pane.dataset.agentSubscores || '{}');
   const active = JSON.parse(pane.dataset.activeCorrections || '{}');

@@ -189,6 +189,80 @@ def test_render_candidates_index_shows_english_workbench():
     assert 'lang="en"' in html
 
 
+def test_render_candidates_index_includes_accessible_workbench_divider():
+    html = _render_candidates_index(
+        FakeStore(),
+        {"id": ["1"]},
+        rules=_rules(),
+    )
+
+    assert 'class="workbench-divider"' in html
+    assert 'role="separator"' in html
+    assert 'aria-orientation="vertical"' in html
+    assert 'tabindex="0"' in html
+    assert "--candidate-list-width: 22%" in html
+    assert "minmax(220px, var(--candidate-list-width))" in html
+    assert "minmax(480px, 1fr)" in html
+    assert html.index('class="candidate-list"') < html.index(
+        'class="workbench-divider"'
+    )
+    assert html.index('class="workbench-divider"') < html.index(
+        'class="candidate-detail"'
+    )
+
+
+def test_render_candidates_index_includes_divider_resize_interactions():
+    html = _render_candidates_index(
+        FakeStore(),
+        {"id": ["1"]},
+        rules=_rules(),
+    )
+
+    assert "pointerdown" in html
+    assert "pointermove" in html
+    assert "pointerup" in html
+    assert "setPointerCapture" in html
+    assert "ArrowLeft" in html
+    assert "ArrowRight" in html
+    assert '"Home"' in html
+    assert '"End"' in html
+    assert "220" in html
+    assert "480" in html
+
+
+def test_divider_resize_lifecycle_reclamps_and_cleans_up_pointer_capture():
+    html = _render_candidates_index(
+        FakeStore(),
+        {"id": ["1"]},
+        rules=_rules(),
+    )
+
+    assert "const synchronizeDivider = () =>" in html
+    assert "adjustedLeftWidth = setLeftWidth(adjustedLeftWidth)" in html
+    assert "new ResizeObserver(synchronizeDivider)" in html
+    assert "resizeObserver.observe(workbench)" in html
+    assert "divider.addEventListener('lostpointercapture', finishResize)" in html
+    assert "divider.classList.remove('active')" in html
+    assert "activePointer = null" in html
+
+
+def test_divider_uses_content_bounds_and_preserves_default_until_user_resize():
+    html = _render_candidates_index(
+        FakeStore(),
+        {"id": ["1"]},
+        rules=_rules(),
+    )
+
+    assert "const contentWidth = workbench.clientWidth" in html
+    assert "contentWidth - minimumRight - divider.offsetWidth" in html
+    assert "event.clientX - rect.left" in html
+    assert "let userAdjusted = false" in html
+    assert "let adjustedLeftWidth = null" in html
+    assert "if (userAdjusted)" in html
+    assert "setLeftWidth(adjustedLeftWidth)" in html
+    assert "workbench.style.removeProperty('--candidate-list-width')" in html
+
+
 def test_workbench_filter_controls_and_links_preserve_date_context():
     store = FakeStore(corrections=[_correction()])
     html = _render_candidates_index(
