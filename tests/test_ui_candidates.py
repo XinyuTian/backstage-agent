@@ -1,15 +1,21 @@
 import json
+from dataclasses import asdict
 from datetime import date
 from html.parser import HTMLParser
 
 import backstage_agent.ui as ui
+from backstage_agent.candidate_models import CandidateFeatures
+from backstage_agent.models import CastingNotice
 from backstage_agent.ui import (
+    _candidate_evidence_sections,
     _candidate_workbench_view,
     _correction_redirect,
+    _flatten_requirements,
     _get_route,
     _post_route,
     _render_candidate_detail,
     _render_candidates_index,
+    _render_readable_evidence,
     _reset_component_correction_from_params,
     _save_component_correction_from_params,
 )
@@ -73,6 +79,428 @@ def _correction(component="role_value", corrected=10, saved_max=15, version="tes
         "scoring_version": version,
         "component_max_at_correction": saved_max,
     }
+
+
+def test_flatten_requirements_removes_wrappers_and_duplicate_evidence():
+    requirements = {
+        "requirement_1": {
+            "description": "Age 18+",
+            "importance": "mandatory",
+            "evidence": "Background / Extra, 18+",
+        },
+        "requirement_2": {
+            "description": "Stunt experience",
+            "importance": "mandatory",
+            "evidence": "Stunt experience",
+        },
+        "requirement_3": {},
+    }
+
+    assert _flatten_requirements(requirements) == [
+        {
+            "description": "Age 18+",
+            "importance": "mandatory",
+            "evidence": "Background / Extra, 18+",
+        },
+        {
+            "description": "Stunt experience",
+            "importance": "mandatory",
+            "evidence": "",
+        },
+    ]
+    assert _flatten_requirements(["Valid passport", {"description": "Local hire"}]) == [
+        {"description": "Valid passport", "importance": "", "evidence": ""},
+        {"description": "Local hire", "importance": "", "evidence": ""},
+    ]
+
+
+def test_flatten_requirements_uses_semantic_keys_and_omits_technical_fields():
+    requirements = {
+        "valid_passport": {"required": True, "evidence": "Must have one."},
+        "local_hire": {"required": False, "evidence": "Los Angeles local hire."},
+        "requirement_1": {"required": True, "evidence": "Must have one."},
+        "empty_requirement": {"required": True},
+    }
+
+    assert _flatten_requirements(requirements) == [
+        {
+            "description": "Valid Passport",
+            "importance": "",
+            "evidence": "Must have one.",
+        },
+        {
+            "description": "Local Hire",
+            "importance": "",
+            "evidence": "Los Angeles local hire.",
+        },
+    ]
+
+
+def test_scalar_requirement_map_preserves_semantic_context_in_rendered_bullets():
+    requirements = {
+        "age_range": "60-70",
+        "gender": "Female",
+        "location": "Los Angeles local hire",
+        "shoot_dates": "August 12-14",
+        "skills": "Fluent Mandarin",
+        "union_status": "Non-union",
+        "requirement_1": "Must have a valid passport",
+    }
+
+    flattened = _flatten_requirements(requirements)
+
+    assert flattened == [
+        {"description": "Age Range", "importance": "", "evidence": "60-70"},
+        {"description": "Gender", "importance": "", "evidence": "Female"},
+        {
+            "description": "Location",
+            "importance": "",
+            "evidence": "Los Angeles local hire",
+        },
+        {
+            "description": "Shoot Dates",
+            "importance": "",
+            "evidence": "August 12-14",
+        },
+        {
+            "description": "Skills",
+            "importance": "",
+            "evidence": "Fluent Mandarin",
+        },
+        {
+            "description": "Union Status",
+            "importance": "",
+            "evidence": "Non-union",
+        },
+        {
+            "description": "Must have a valid passport",
+            "importance": "",
+            "evidence": "",
+        },
+    ]
+
+    html = _render_readable_evidence(
+        {
+            "features": {"requirements": requirements},
+            "notice": {},
+            "requirement_matches": [],
+        }
+    )
+    for label, value in (
+        ("Age Range", "60-70"),
+        ("Gender", "Female"),
+        ("Location", "Los Angeles local hire"),
+        ("Shoot Dates", "August 12-14"),
+        ("Skills", "Fluent Mandarin"),
+        ("Union Status", "Non-union"),
+    ):
+        assert f"<li>{label}" in html
+        assert value in html
+    assert "Requirement 1" not in html
+
+
+def _candidate_features(**overrides):
+    values = {
+        "role_type": "background_extra",
+        "project_type": "film",
+        "requirements": {
+            "age_18_plus": {
+                "required": True,
+                "importance": "mandatory",
+                "evidence": "Background / Extra, 18+",
+            },
+            "stunt_experience": {
+                "required": True,
+                "importance": "mandatory",
+                "evidence": "Stunt experience a must.",
+            },
+        },
+        "project_signals": {},
+        "compensation": {"amount": "$100", "type": "flat_rate"},
+        "uncertainty": {},
+        "evidence_snippets": ["Stunt experience a must."],
+        "raw": {},
+    }
+    values.update(overrides)
+    return asdict(CandidateFeatures(**values))
+
+
+def _casting_notice(**overrides):
+    values = {
+        "source_message_id": "message-1",
+        "title": "The Legend of Bro-Man - Enemy Soldier",
+        "project": "The Legend of Bro-Man",
+        "role": "Enemy Soldier",
+        "location": "Los Angeles, CA",
+        "compensation": "$100 flat rate",
+        "description": "Performs as one of the enemy soldiers.",
+        "application_url": "https://example.test/apply",
+        "raw_text": "Complete original listing.",
+        "shooting_locations": "Los Angeles and Pasadena",
+        "shooting_dates": "August 12-14",
+    }
+    values.update(overrides)
+    return asdict(CastingNotice(**values))
+
+
+def test_candidate_evidence_sections_are_readable_and_source_grounded():
+    view = {
+        "candidate_type": "role",
+        "notice": _casting_notice(),
+        "features": _candidate_features(),
+        "requirement_matches": [
+            {
+                "requirement_key": "stunt_experience",
+                "status": "unknown",
+                "local_value": "not recorded",
+                "evidence": "Stunt experience a must.",
+                "reason": "Profile has no stunt experience evidence.",
+            }
+        ],
+    }
+
+    sections = _candidate_evidence_sections(view)
+    headings = [section["heading"] for section in sections]
+    text = json.dumps(sections)
+
+    assert headings == [
+        "Role",
+        "Project",
+        "Where and when",
+        "Compensation",
+        "Requirements",
+        "Decision notes",
+    ]
+    for expected in (
+        "Performs as one of the enemy soldiers.",
+        "Film",
+        "Los Angeles and Pasadena",
+        "August 12-14",
+        "$100",
+        "Age 18 Plus",
+        "Stunt Experience",
+        "Profile has no stunt experience evidence.",
+    ):
+        assert expected in text
+    assert "requirement_1" not in text
+    assert "Requirement 1" not in text
+    assert "Project Signals" not in text
+    assert "Uncertainty" not in text
+    assert text.count("Stunt experience a must.") == 2
+    by_heading = {section["heading"]: section["items"] for section in sections}
+    assert by_heading["Role"][0] == {
+        "label": "Description",
+        "value": "Performs as one of the enemy soldiers.",
+    }
+    assert by_heading["Project"] == [{"label": "Type", "value": "Film"}]
+
+
+def test_candidate_evidence_sections_routes_project_only_description_to_project():
+    view = {
+        "candidate_type": "project_only",
+        "notice": _casting_notice(
+            title="Independent action-comedy short",
+            project="Independent action-comedy short",
+            role=None,
+            location=None,
+            compensation=None,
+            description="Independent action-comedy short.",
+            raw_text="Independent action-comedy short.",
+            shooting_locations=None,
+            shooting_dates=None,
+        ),
+        "features": _candidate_features(
+            role_type="project_only",
+            requirements={},
+            compensation={},
+            evidence_snippets=[],
+        ),
+        "requirement_matches": [],
+    }
+
+    sections = _candidate_evidence_sections(view)
+    by_heading = {section["heading"]: section["items"] for section in sections}
+
+    assert "Role" not in by_heading
+    assert by_heading["Project"] == [
+        {"label": "Description", "value": "Independent action-comedy short."},
+        {"label": "Type", "value": "Film"},
+    ]
+
+
+def test_candidate_evidence_sections_omits_empty_payload_without_unknown_sections():
+    assert _candidate_evidence_sections({}) == []
+    assert _candidate_evidence_sections(
+        {"notice": {}, "features": {}, "requirement_matches": []}
+    ) == []
+
+
+def test_render_readable_evidence_uses_adaptive_single_column_sections():
+    view = {
+        "candidate_type": "role",
+        "notice": _casting_notice(),
+        "features": _candidate_features(),
+        "requirement_matches": [
+            {
+                "requirement_key": "stunt_experience",
+                "status": "unknown",
+                "reason": "Profile has no stunt experience evidence.",
+            },
+            {
+                "requirement_key": "requirement_1",
+                "status": "unknown_needs_user_input",
+                "reason": "No local rule exists.",
+            },
+        ],
+    }
+
+    html = _render_readable_evidence(view)
+
+    assert 'class="readable-evidence"' in html
+    assert 'class="evidence-section"' in html
+    for heading in (
+        "Role",
+        "Project",
+        "Where and when",
+        "Compensation",
+        "Requirements",
+        "Decision notes",
+    ):
+        assert heading in html
+    assert "Original listing text" in html
+    assert "<details" in html
+    assert "Requirement 1" not in html
+    assert "Requirement Key" not in html
+    assert 'class="evidence-grid"' not in html
+
+
+def test_decision_notes_preserve_adversarial_detail_text_without_reparsing():
+    reason = "Schedule conflict: unavailable Aug 12; passport status: expired"
+    evidence = "Agent note: <verified> & ready; keep: punctuation"
+    local_value = "Known: no; source: profile & notes"
+    view = {
+        "candidate_type": "role",
+        "notice": _casting_notice(),
+        "features": _candidate_features(),
+        "requirement_matches": [
+            {
+                "requirement_key": "availability",
+                "status": "not_met",
+                "local_value": local_value,
+                "evidence": evidence,
+                "reason": reason,
+            }
+        ],
+    }
+
+    sections = _candidate_evidence_sections(view)
+    decision = next(
+        section for section in sections if section["heading"] == "Decision notes"
+    )
+    assert decision["items"] == [
+        {
+            "label": "Availability",
+            "details": [
+                {"label": "Status", "value": "Not Met"},
+                {"label": "Local value", "value": local_value},
+                {"label": "Evidence", "value": evidence},
+                {"label": "Reason", "value": reason},
+            ],
+        }
+    ]
+
+    html = _render_readable_evidence(view)
+    assert reason in html
+    assert "Known: no; source: profile &amp; notes" in html
+    assert "Agent note: &lt;verified&gt; &amp; ready; keep: punctuation" in html
+
+
+def test_compensation_dedupe_prefers_fuller_containing_value_and_keeps_distinct_terms():
+    view = {
+        "candidate_type": "role",
+        "notice": _casting_notice(
+            compensation="$100 flat rate (est. 8 hours); travel reimbursed"
+        ),
+        "features": _candidate_features(
+            compensation={
+                "amount": "$100",
+                "type": "flat_rate",
+                "details": "$100 flat rate (est. 8 hours)",
+                "additional_terms": "Meals provided",
+            }
+        ),
+        "requirement_matches": [],
+    }
+
+    sections = _candidate_evidence_sections(view)
+    compensation = next(
+        section for section in sections if section["heading"] == "Compensation"
+    )
+
+    assert compensation["items"] == [
+        {
+            "label": "Listing terms",
+            "value": "$100 flat rate (est. 8 hours); travel reimbursed",
+        },
+        {"label": "Additional Terms", "value": "Meals provided"},
+    ]
+
+
+def test_render_readable_evidence_sections_are_direct_vertical_siblings():
+    class EvidenceStructureParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.readable_depth = None
+            self.section_parent_depths = []
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            if (
+                tag == "div"
+                and attributes.get("class") == "readable-evidence"
+            ):
+                self.readable_depth = len(self.stack)
+            elif (
+                tag == "section"
+                and attributes.get("class") == "evidence-section"
+            ):
+                self.section_parent_depths.append(len(self.stack))
+            self.stack.append(tag)
+
+        def handle_endtag(self, tag):
+            if self.stack:
+                self.stack.pop()
+
+    parser = EvidenceStructureParser()
+    parser.feed(
+        _render_readable_evidence(
+            {
+                "candidate_type": "role",
+                "notice": _casting_notice(
+                    role="Lead",
+                    description="Lead role.",
+                ),
+                "features": _candidate_features(),
+            }
+        )
+    )
+
+    assert len(parser.section_parent_depths) >= 2
+    assert parser.section_parent_depths == [
+        parser.readable_depth + 1
+    ] * len(parser.section_parent_depths)
+
+
+def test_render_readable_evidence_omits_empty_sections_and_original_text():
+    html = _render_readable_evidence(
+        {"notice": {}, "features": {}, "requirement_matches": []}
+    )
+
+    assert 'class="readable-evidence"' in html
+    assert 'class="evidence-section"' not in html
+    assert "Original listing text" not in html
+    assert "<details" not in html
 
 
 class FakeStore:
@@ -433,7 +861,7 @@ def test_workbench_does_not_render_nested_forms():
     assert parser.max_form_depth == 1
 
 
-def test_candidate_detail_renders_only_compact_evidence_and_correction_grid():
+def test_candidate_detail_renders_readable_evidence_and_correction_grid():
     row = _row()
     score_payload = json.loads(row["score_json"])
     score_payload.pop("scoring_snapshot")
@@ -451,8 +879,12 @@ def test_candidate_detail_renders_only_compact_evidence_and_correction_grid():
     assert "Play — Lead" in html
     assert 'class="detail-score"' in html
     assert 'class="evidence-pane"' in html
-    assert "Extracted features" in html
-    assert "Requirement matches" in html
+    assert 'class="readable-evidence"' in html
+    assert "Role" in html
+    assert "Original listing text" in html
+    assert "Extracted features" not in html
+    assert "Requirement matches" not in html
+    assert 'class="evidence-grid"' not in html
     assert 'class="correction-grid"' in html
     assert "Agent score" in html
     assert "Your correction" in html

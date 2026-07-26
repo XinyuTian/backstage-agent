@@ -18,6 +18,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Changed
 
+- Replaced nested candidate evidence payloads with an adaptive single-column detail view that omits empty sections, flattens requirements, and keeps original listing text collapsed.
 - Made the candidate workbench's 22/78 desktop split adjustable by pointer drag or keyboard (16-pixel arrow steps, Home, and End), while keeping the divider hidden on mobile and restoring the default split on reload.
 - Made Backstage digest subject dates take precedence over message receipt dates, and use the resulting project date for candidate workbench ordering and exact-day/seven-day filtering.
 - Compacted the candidate workbench with a green header, date navigation, simplified evidence, and a bottom spreadsheet-style component grid containing only agent-score and correction rows; correction links and saves preserve the selected date window.

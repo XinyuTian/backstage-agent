@@ -479,10 +479,7 @@ def _render_candidate_detail(
         <strong class="detail-score" data-overall>{view["display_overall"]}</strong>
       </div>
       <section class="evidence-pane">
-        <div class="evidence-grid">
-          {_render_json_section("Extracted features", view["features"])}
-          {_render_json_section("Requirement matches", view["requirement_matches"])}
-        </div>
+        {_render_readable_evidence(view)}
       </section>
       <section class="score-pane"
         data-agent-subscores="{_esc(json.dumps({name: item["agent_score"] for name, item in view["components"].items()}))}"
@@ -600,6 +597,99 @@ def _render_json_section(title: str, value) -> str:
     )
 
 
+def _render_readable_evidence(view: dict) -> str:
+    """Render candidate evidence as adaptive, source-grounded prose."""
+    sections = []
+    for section in _candidate_evidence_sections(view):
+        heading = str(section["heading"])
+        items = section["items"]
+        if heading == "Requirements":
+            body = _render_evidence_list(items, include_metadata=True)
+        elif heading == "Decision notes":
+            body = _render_decision_notes(items)
+        else:
+            body = "".join(
+                f'<p><span class="evidence-label">{_esc(item["label"])}:</span> '
+                f'{_esc(item["value"])}</p>'
+                for item in items
+            )
+        sections.append(
+            '<section class="evidence-section">'
+            f"<h3>{_esc(heading)}</h3>{body}</section>"
+        )
+
+    notice = view.get("notice") if isinstance(view.get("notice"), dict) else {}
+    original_text = _first_text(
+        notice.get("raw_text"),
+        notice.get("description"),
+    )
+    original = ""
+    if original_text:
+        original = (
+            '<details class="original-listing">'
+            "<summary>Original listing text</summary>"
+            f'<div class="original-listing-text">{_esc(original_text)}</div>'
+            "</details>"
+        )
+    return f'<div class="readable-evidence">{"".join(sections)}{original}</div>'
+
+
+def _render_evidence_list(
+    items: list[dict[str, str]],
+    *,
+    include_metadata: bool = False,
+) -> str:
+    rendered = []
+    for item in items:
+        label = _clean_text(item.get("description") or item.get("label"))
+        value = _clean_text(item.get("value"))
+        primary = label or value
+        metadata = []
+        if include_metadata:
+            importance = _clean_text(item.get("importance"))
+            evidence = _clean_text(item.get("evidence"))
+            if importance:
+                metadata.append(_humanize(importance))
+            if evidence:
+                metadata.append(evidence)
+        elif label and value:
+            metadata.append(value)
+        detail = (
+            f'<span class="evidence-metadata">{_esc(" · ".join(metadata))}</span>'
+            if metadata
+            else ""
+        )
+        rendered.append(f"<li>{_esc(primary)}{detail}</li>")
+    return f'<ul class="evidence-list">{"".join(rendered)}</ul>'
+
+
+def _render_decision_notes(items: list[dict[str, object]]) -> str:
+    rendered = []
+    for item in items:
+        label = _clean_text(item.get("label"))
+        if label.casefold().startswith("requirement "):
+            suffix = label.rsplit(" ", 1)[-1]
+            if suffix.isdigit():
+                label = ""
+        details = item.get("details")
+        detail_values = (
+            [
+                _clean_text(detail.get("value"))
+                for detail in details
+                if isinstance(detail, dict) and _clean_text(detail.get("value"))
+            ]
+            if isinstance(details, list)
+            else []
+        )
+        prefix = (
+            f'<span class="evidence-label">{_esc(label)}:</span> '
+            if label
+            else ""
+        )
+        rendered.append(f"<li>{prefix}{_esc(' · '.join(detail_values))}</li>")
+    return f'<ul class="evidence-list">{"".join(rendered)}</ul>'
+
+
 def _render_list_section(title: str, items: list[str]) -> str:
     body = (
         "<ul>" + "".join(f"<li>{_esc(item)}</li>" for item in items) + "</ul>"
@@ -699,6 +789,265 @@ def _candidate_display_title(view: dict) -> str:
             if project and role:
                 return f"{project} — {role}"
     return str(view.get("title") or "Untitled Candidate")
+
+
+def _flatten_requirements(value: object) -> list[dict[str, str]]:
+    """Return useful requirement facts without extraction wrapper keys."""
+    flattened: list[dict[str, str]] = []
+    seen = set()
+
+    def visit(item: object, semantic_key: str = "") -> None:
+        if isinstance(item, str):
+            description = item.strip()
+            if description:
+                if semantic_key and not _is_numbered_requirement_key(
+                    semantic_key
+                ):
+                    append(_humanize(semantic_key), "", description)
+                else:
+                    append(description, "", "")
+            return
+        if isinstance(item, list):
+            for child in item:
+                visit(child)
+            return
+        if not isinstance(item, dict):
+            return
+
+        description = _clean_text(item.get("description"))
+        importance = _clean_text(item.get("importance"))
+        evidence = _clean_text(item.get("evidence"))
+        if (
+            not description
+            and semantic_key
+            and not _is_numbered_requirement_key(semantic_key)
+            and (importance or evidence)
+        ):
+            description = _humanize(semantic_key)
+        if description or importance or evidence:
+            if description and evidence and description.casefold() == evidence.casefold():
+                evidence = ""
+            append(description, importance, evidence)
+            return
+        for key, child in item.items():
+            visit(child, str(key))
+
+    def append(description: str, importance: str, evidence: str) -> None:
+        evidence_key = evidence.casefold()
+        if (
+            not description
+            and evidence_key
+            and any(existing[2] == evidence_key for existing in seen)
+        ):
+            return
+        signature = (
+            description.casefold(),
+            importance.casefold(),
+            evidence_key,
+        )
+        if signature in seen:
+            return
+        seen.add(signature)
+        flattened.append(
+            {
+                "description": description,
+                "importance": importance,
+                "evidence": evidence,
+            }
+        )
+
+    visit(value)
+    return flattened
+
+
+def _candidate_evidence_sections(view: dict) -> list[dict[str, object]]:
+    """Build adaptive, source-grounded evidence sections for a candidate."""
+    notice = view.get("notice") if isinstance(view.get("notice"), dict) else {}
+    features = (
+        view.get("features") if isinstance(view.get("features"), dict) else {}
+    )
+    sections: list[dict[str, object]] = []
+    is_role_candidate = bool(_clean_text(notice.get("role"))) or (
+        _clean_text(view.get("candidate_type")) == "role"
+    )
+
+    def add_section(heading: str, items: list[dict[str, object]]) -> None:
+        useful = [
+            item
+            for item in items
+            if any(
+                _clean_text(value)
+                or (isinstance(value, (list, dict)) and bool(value))
+                for value in item.values()
+            )
+        ]
+        if useful:
+            sections.append({"heading": heading, "items": useful})
+
+    role_description = _first_text(
+        notice.get("description") if is_role_candidate else "",
+    )
+    if is_role_candidate:
+        add_section(
+            "Role",
+            _labeled_items(
+                ("Description", role_description),
+                (
+                    "Type",
+                    _humanize(features["role_type"])
+                    if _clean_text(features.get("role_type"))
+                    else "",
+                ),
+            ),
+        )
+
+    project_description = _first_text(
+        notice.get("description") if not is_role_candidate else "",
+    )
+    add_section(
+        "Project",
+        _labeled_items(
+            ("Description", project_description),
+            (
+                "Type",
+                _humanize(features["project_type"])
+                if _clean_text(features.get("project_type"))
+                else "",
+            ),
+        ),
+    )
+
+    add_section(
+        "Where and when",
+        _labeled_items(
+            ("Location", notice.get("location")),
+            ("Shooting locations", notice.get("shooting_locations")),
+            ("Shooting dates", notice.get("shooting_dates")),
+        ),
+    )
+
+    compensation_items: list[dict[str, str]] = []
+    feature_compensation = features.get("compensation")
+    if isinstance(feature_compensation, dict):
+        compensation_items.extend(
+            _labeled_items(
+                *(
+                    (_humanize(key), value)
+                    for key, value in feature_compensation.items()
+                )
+            )
+        )
+    elif feature_compensation:
+        compensation_items.extend(
+            _labeled_items(("Compensation", feature_compensation))
+        )
+    compensation_items.extend(
+        _labeled_items(
+            ("Listing terms", notice.get("compensation")),
+        )
+    )
+    add_section("Compensation", _deduplicate_items(compensation_items))
+
+    requirements = _flatten_requirements(features.get("requirements"))
+    if requirements:
+        sections.append({"heading": "Requirements", "items": requirements})
+
+    decision_items = _decision_note_items(view.get("requirement_matches"))
+    add_section("Decision notes", decision_items)
+    return sections
+
+
+def _decision_note_items(value: object) -> list[dict[str, object]]:
+    records: list[tuple[str, dict]] = []
+    if isinstance(value, list):
+        records.extend(("", item) for item in value if isinstance(item, dict))
+    elif isinstance(value, dict):
+        if any(
+            key in value
+            for key in ("status", "local_value", "evidence", "reason")
+        ):
+            records.append(("", value))
+        else:
+            records.extend(
+                (str(key), item)
+                for key, item in value.items()
+                if isinstance(item, dict)
+            )
+
+    items = []
+    for wrapper_key, record in records:
+        source_key = _clean_text(
+            record.get("description")
+            or record.get("requirement")
+            or record.get("requirement_key")
+        )
+        if not source_key and not wrapper_key.lower().startswith("requirement_"):
+            source_key = wrapper_key
+        label = _humanize(source_key) if source_key else "Requirement"
+        details = _labeled_items(
+            ("Status", _humanize(record.get("status")) if record.get("status") else ""),
+            ("Local value", record.get("local_value")),
+            ("Evidence", record.get("evidence")),
+            ("Reason", record.get("reason")),
+        )
+        if details:
+            items.append({"label": label, "details": details})
+    return items
+
+
+def _labeled_items(*pairs) -> list[dict[str, str]]:
+    return [
+        {"label": str(label), "value": text}
+        for label, value in pairs
+        if (text := _clean_text(value))
+    ]
+
+
+def _deduplicate_items(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    result = []
+    for item in items:
+        value_key = _normalize_containment_text(item["value"])
+        existing_keys = [
+            _normalize_containment_text(existing["value"]) for existing in result
+        ]
+        if any(value_key in existing_key for existing_key in existing_keys):
+            continue
+        contained_indexes = [
+            index
+            for index, existing_key in enumerate(existing_keys)
+            if existing_key in value_key
+        ]
+        if contained_indexes:
+            insert_at = contained_indexes[0]
+            result = [
+                existing
+                for index, existing in enumerate(result)
+                if index not in contained_indexes
+            ]
+            result.insert(insert_at, item)
+        else:
+            result.append(item)
+    return result
+
+
+def _normalize_containment_text(value: str) -> str:
+    return " ".join(value.replace("_", " ").casefold().split())
+
+
+def _first_text(*values: object) -> str:
+    for value in values:
+        if text := _clean_text(value):
+            return text
+    return ""
+
+
+def _clean_text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _is_numbered_requirement_key(value: str) -> bool:
+    prefix, separator, suffix = value.casefold().rpartition("_")
+    return bool(separator and prefix == "requirement" and suffix.isdigit())
 
 
 def _date_navigation(query: str, band: str, date_end: str, days: int) -> str:
@@ -843,9 +1192,17 @@ button.secondary { background: white; color: #31443b; }
 .detail-heading h2 { margin: 0; }
 .detail-score { font-size: 30px; line-height: 1; color: #20342b; }
 .evidence-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 18px 12px; }
-.evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.evidence-grid article { padding: 11px; background: #f8f6f1; overflow-wrap: anywhere; }
-.evidence-grid h3 { margin: 0 0 9px; font-size: 13px; }
+.readable-evidence { max-width: 760px; overflow-wrap: anywhere; }
+.evidence-section { padding: 16px 0; border-bottom: 1px solid #e6e1d8; }
+.evidence-section h3 { margin: 0 0 9px; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: #5d665f; }
+.evidence-section p, .evidence-section li { font-weight: 400; line-height: 1.6; }
+.evidence-section p { margin: 5px 0; }
+.evidence-label { font-weight: 600; color: #3d4942; }
+.evidence-list { margin: 0; }
+.evidence-metadata { display: block; color: #716d64; font-size: 12px; }
+.original-listing { padding: 16px 0; color: #4d5750; }
+.original-listing summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.original-listing-text { margin-top: 10px; white-space: pre-wrap; font-weight: 400; line-height: 1.6; }
 dl { margin: 0; }
 dt { font-weight: 750; margin-top: 7px; }
 dd { margin: 3px 0 0 10px; }
@@ -874,7 +1231,6 @@ ul { margin: 6px 0; padding-left: 20px; }
   .candidate-list { max-height: 280px; border-right: 0; border-bottom: 1px solid #ddd7cc; }
   .candidate-detail { display: block; overflow: visible; }
   .evidence-pane, .score-pane { max-height: none; overflow: auto; }
-  .evidence-grid { grid-template-columns: 1fr; }
 }
 """
 
