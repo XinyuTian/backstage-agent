@@ -220,9 +220,9 @@ def test_workbench_rows_use_effective_project_date_order(
     casting_notice_factory,
 ):
     store = DecisionStore(tmp_path / "db.sqlite3")
-    for title, key, seen_date, score_value in (
-        ("Old", "old-project", date(2026, 7, 20), 95),
-        ("New", "new-project", date(2026, 7, 24), 45),
+    for title, key, project_date, seen_date, score_value in (
+        ("Old", "old-project", date(2026, 7, 20), date(2026, 7, 24), 95),
+        ("New", "new-project", date(2026, 7, 24), date(2026, 7, 24), 45),
     ):
         project_id = store.upsert_project(
             ProjectNotice(
@@ -231,7 +231,7 @@ def test_workbench_rows_use_effective_project_date_order(
                 project_url=f"https://example.com/{key}",
                 description=title,
                 raw_text=title,
-                project_date=seen_date,
+                project_date=project_date,
                 project_key=key,
             ),
             seen_date=seen_date,
@@ -255,6 +255,51 @@ def test_workbench_rows_use_effective_project_date_order(
 
     assert [row["project_key"] for row in rows] == ["new-project", "old-project"]
     assert rows[0]["effective_project_date"] == "2026-07-24"
+    assert rows[1]["effective_project_date"] == "2026-07-20"
+
+
+def test_workbench_rows_filter_by_exact_day_and_seven_day_window(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    for title, key, project_date in (
+        ("Outside", "outside-project", date(2026, 7, 17)),
+        ("Window Start", "window-start-project", date(2026, 7, 18)),
+        ("Exact Day", "exact-day-project", date(2026, 7, 23)),
+    ):
+        project_id = store.upsert_project(
+            ProjectNotice(
+                source_message_id=key,
+                title=title,
+                project_url=f"https://example.com/{key}",
+                description=title,
+                raw_text=title,
+                project_date=project_date,
+                project_key=key,
+            ),
+            seen_date=date(2026, 7, 24),
+        )
+        store.record_candidate(
+            CandidateInput.project_only_candidate(
+                project_id=project_id,
+                project_key=key,
+                title=title,
+                source_message_id=key,
+                description=title,
+                application_url=None,
+            ),
+            _features(),
+            [],
+            _score(),
+        )
+
+    rows = store.search_candidate_workbench_rows(date_end="2026-07-23", days=1)
+    assert [row["effective_project_date"] for row in rows] == ["2026-07-23"]
+    assert [row["project_key"] for row in rows] == ["exact-day-project"]
+
+    rows = store.search_candidate_workbench_rows(date_end="2026-07-24", days=7)
+    assert {row["effective_project_date"] for row in rows} == {
+        "2026-07-18",
+        "2026-07-23",
+    }
 
 
 def test_correction_patterns_count_only_latest_component_value(

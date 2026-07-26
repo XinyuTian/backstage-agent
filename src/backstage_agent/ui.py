@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 from dataclasses import asdict
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -127,9 +128,12 @@ def _render_candidates_index(
     current_rules = rules or load_scoring_rules()
     query = _param(params, "q")
     band = _param(params, "band", "all")
+    date_end, days = _date_filter_context(params)
     rows = store.search_candidate_workbench_rows(
         query=query,
         band=band,
+        date_end=date_end,
+        days=days,
         limit=200,
     )
     keys = [_candidate_identity(row) for row in rows]
@@ -154,7 +158,7 @@ def _render_candidates_index(
         else ""
     )
     content = (
-        _render_workbench(views, selected, query, band)
+        _render_workbench(views, selected, query, band, date_end, days)
         if selected is not None
         else '<div class="empty">No candidates match the current filters.</div>'
     )
@@ -169,15 +173,17 @@ def _render_candidates_index(
 <body>
   <header>
     <div>
-      <h1>Score Review Workbench</h1>
-      <p>Compare extraction, agent scores, and current component corrections.</p>
+      <h1>Backstage Candidates</h1>
     </div>
   </header>
   <main>
     {notice}
     <form class="filters" method="get" action="/candidates">
-      <label>Search<input name="q" value="{_esc(query)}" placeholder="Candidate title"></label>
-      <label>Agent score band<select name="band">{_band_options(band)}</select></label>
+      <input name="q" value="{_esc(query)}" placeholder="Search project or role" aria-label="Search project or role">
+      <input name="date" type="date" value="{_esc(date_end)}" aria-label="Date">
+      {_date_navigation(query, band, date_end, days)}
+      <input type="hidden" name="days" value="{days}">
+      <input type="hidden" name="band" value="{_esc(band)}">
       <button type="submit">Filter</button>
     </form>
     {content}
@@ -402,16 +408,25 @@ def _candidate_row_by_id(store: DecisionStore, candidate_id: int):
     raise ValueError(f"Candidate {candidate_id} was not found.")
 
 
-def _render_workbench(views: list[dict], selected: dict, query: str, band: str) -> str:
+def _render_workbench(
+    views: list[dict],
+    selected: dict,
+    query: str,
+    band: str,
+    date_end: str,
+    days: int,
+) -> str:
     candidates = "".join(
-        _render_candidate_list_item(view, selected["id"], query, band)
+        _render_candidate_list_item(
+            view, selected["id"], query, band, date_end, days
+        )
         for view in views
     )
     return f"""
     <section class="score-workbench">
       <nav class="candidate-list" aria-label="Candidates">{candidates}</nav>
       <section class="candidate-detail">
-        {_render_candidate_detail(selected, query, band)}
+        {_render_candidate_detail(selected, query, band, date_end, days)}
       </section>
     </section>
     """
@@ -422,9 +437,17 @@ def _render_candidate_list_item(
     selected_id: int,
     query: str,
     band: str,
+    date_end: str,
+    days: int,
 ) -> str:
     params = urlencode(
-        {"id": view["id"], "q": query, "band": band},
+        {
+            "id": view["id"],
+            "q": query,
+            "band": band,
+            "date": date_end,
+            "days": days,
+        },
     )
     selected_class = " selected" if view["id"] == selected_id else ""
     return f"""
@@ -432,93 +455,102 @@ def _render_candidate_list_item(
        href="/candidates?{_esc(params)}">
       <span class="list-score">{view["display_overall"]}</span>
       <span class="list-copy">
-        <strong>{_esc(view["title"])}</strong>
+        <strong>{_esc(_candidate_display_title(view))}</strong>
         <small>{_esc(view["effective_project_date"] or "Date unknown")} · {_esc(_humanize(view["candidate_type"]))}</small>
       </span>
     </a>
     """
 
 
-def _render_candidate_detail(view: dict, query: str, band: str) -> str:
-    warnings = "".join(
-        f'<p class="warning">{_esc(warning)}</p>' for warning in view["warnings"]
-    )
-    caps = (
-        " ".join(
-            f'<span class="cap">{_esc(cap["label"])} ≤ {cap["value"]}</span>'
-            for cap in view["caps"]
-        )
-        or '<span class="muted">No active caps</span>'
-    )
-    corrected_note = (
-        f'<span class="agent-original">Agent overall: {view["agent_overall"]}</span>'
-        if view["display_overall"] != view["agent_overall"]
-        else ""
-    )
+def _render_candidate_detail(
+    view: dict,
+    query: str,
+    band: str,
+    date_end: str,
+    days: int,
+) -> str:
     return f"""
       <div class="detail-heading">
-        <div><p class="eyebrow">{_esc(_humanize(view["candidate_type"]))}</p>
-        <h2>{_esc(view["title"])}</h2></div>
-        <div class="overall band-{_esc(view["display_band"])}">
-          <span>Overall</span><strong data-overall>{view["display_overall"]}</strong>
-          <small data-band>{_esc(_humanize(view["display_band"]))}</small>
-          {corrected_note}
-        </div>
+        <h2>{_esc(_candidate_display_title(view))}</h2>
+        <strong class="detail-score" data-overall>{view["display_overall"]}</strong>
       </div>
       <section class="evidence-pane">
-        {warnings}
         <div class="evidence-grid">
-          {_render_json_section("Listing", view["notice"])}
           {_render_json_section("Extracted features", view["features"])}
           {_render_json_section("Requirement matches", view["requirement_matches"])}
-          {_render_list_section("Positive drivers", view["positive_drivers"])}
-          {_render_list_section("Negative drivers", view["negative_drivers"])}
-          {_render_json_section("Score trace", view["score_trace"])}
         </div>
       </section>
       <section class="score-pane"
         data-agent-subscores="{_esc(json.dumps({name: item["agent_score"] for name, item in view["components"].items()}))}"
         data-active-corrections="{_esc(json.dumps({name: item["corrected_score"] for name, item in view["components"].items() if item["active"]}))}"
-        data-cap-values="{_esc(json.dumps([cap["value"] for cap in view["caps"]]))}"
-        data-band-thresholds="{_esc(json.dumps(view["snapshot"]["band_thresholds"]))}">
-        <div class="caps-bar"><strong>Active caps</strong>{caps}</div>
-        <div class="score-table">
-          <div class="score-row score-header">
-            <span>Component</span><span>Agent</span><span>Correction</span>
-            <span>Reason (optional)</span><span>Action</span>
-          </div>
-          {"".join(_render_component_row(view, component, query, band) for component in view["components"].values())}
-        </div>
-        <p class="agent-metadata">Agent rank: {_esc(view["agent_rank"] or "Unranked")} · Agent draft suggestion: {"Yes" if view["agent_draft_suggestion"] else "No"}</p>
+        data-cap-values="{_esc(json.dumps([cap["value"] for cap in view["caps"]]))}">
+        {_render_component_grid(view, query, date_end, days, band)}
       </section>
     """
 
 
-def _render_component_row(
+def _render_component_grid(
+    view: dict,
+    query: str,
+    date_end: str,
+    days: int,
+    band: str = "all",
+) -> str:
+    components = list(view["components"].values())
+    headings = "".join(
+        f'<th scope="col">{_esc(component["label"])}</th>'
+        for component in components
+    )
+    agent_scores = "".join(
+        f'<td>{component["agent_score"]} / {component["maximum"]}</td>'
+        for component in components
+    )
+    correction_cells = "".join(
+        _render_component_correction_cell(
+            view, component, query, band, date_end, days
+        )
+        for component in components
+    )
+    return f"""
+      <div class="correction-grid-wrapper">
+        <table class="correction-grid">
+          <thead><tr><th></th>{headings}</tr></thead>
+          <tbody>
+            <tr><th scope="row">Agent score</th>{agent_scores}</tr>
+            <tr><th scope="row">Your correction</th>{correction_cells}</tr>
+          </tbody>
+        </table>
+      </div>
+    """
+
+
+def _render_component_correction_cell(
     view: dict,
     component: dict,
     query: str,
     band: str,
+    date_end: str,
+    days: int,
 ) -> str:
-    hidden = _hidden_context(view["id"], component["name"], query, band)
+    hidden = _hidden_context(
+        view["id"], component["name"], query, band, date_end, days
+    )
     correction_value = (
         str(component["corrected_score"])
         if component["corrected_score"] is not None
         else ""
     )
-    status = ""
     action = "/candidate-correction"
     button = "Save"
     if component["stale"]:
-        status = (
-            f'<small class="stale">Stale: max changed from '
-            f'{component["saved_max"]} to {component["maximum"]}</small>'
-        )
         action = "/candidate-correction/reconfirm"
         button = "Reconfirm"
-    elif component["version_warning"]:
-        status = '<small class="warning-inline">Saved under an earlier scoring version</small>'
     disabled = " disabled" if not view["correction_enabled"] else ""
+    reason_disabled = (
+        " disabled"
+        if not view["correction_enabled"] or not correction_value
+        else ""
+    )
     reset = (
         '<button class="secondary" type="submit" '
         'formaction="/candidate-correction/reset">Reset</button>'
@@ -526,18 +558,17 @@ def _render_component_row(
         else ""
     )
     return f"""
-      <div class="score-row" data-component="{_esc(component["name"])}">
-        <span><strong>{_esc(component["label"])}</strong><small>Max {component["maximum"]}</small>{status}</span>
-        <span class="agent-cell">{component["agent_score"]}</span>
+      <td data-component="{_esc(component["name"])}">
         <form class="correction-form" method="post" action="{action}">
           {hidden}
           <input class="correction-input" name="corrected_score" type="number"
-            min="0" max="{component["maximum"]}" value="{_esc(correction_value)}"{disabled}>
-          <input name="reason" value="{_esc(component["reason"])}"
-            placeholder="Optional note"{disabled}>
+            min="0" max="{component["maximum"]}" value="{_esc(correction_value)}"
+            aria-label="{_esc(component["label"])} correction"{disabled}>
+          <input class="feedback-input" name="reason" value="{_esc(component["reason"])}"
+            placeholder="Feedback" aria-label="{_esc(component["label"])} feedback"{reason_disabled}>
           <span class="actions"><button type="submit"{disabled}>{button}</button>{reset}</span>
         </form>
-      </div>
+      </td>
     """
 
 
@@ -546,12 +577,16 @@ def _hidden_context(
     component_name: str,
     query: str,
     band: str,
+    date_end: str,
+    days: int,
 ) -> str:
     return (
         f'<input type="hidden" name="candidate_id" value="{candidate_id}">'
         f'<input type="hidden" name="component_name" value="{_esc(component_name)}">'
         f'<input type="hidden" name="q" value="{_esc(query)}">'
         f'<input type="hidden" name="band" value="{_esc(band)}">'
+        f'<input type="hidden" name="date" value="{_esc(date_end)}">'
+        f'<input type="hidden" name="days" value="{days}">'
     )
 
 
@@ -625,9 +660,71 @@ def _correction_redirect(params: dict[str, list[str]], status: str) -> str:
         "id": _param(params, "candidate_id"),
         "q": _param(params, "q"),
         "band": _param(params, "band", "all"),
+        "date": _param(params, "date"),
+        "days": _param(params, "days", "1"),
         "correction": status,
     }
     return "/candidates?" + urlencode(values)
+
+
+def _date_filter_context(params: dict[str, list[str]]) -> tuple[str, int]:
+    raw_date = _param(params, "date")
+    try:
+        if (
+            len(raw_date) != 10
+            or raw_date[4] != "-"
+            or raw_date[7] != "-"
+            or not (raw_date[:4] + raw_date[5:7] + raw_date[8:]).isdigit()
+        ):
+            raise ValueError
+        date_end = date.fromisoformat(raw_date).isoformat()
+    except ValueError:
+        date_end = date.today().isoformat()
+    days = 7 if _param(params, "days") == "7" else 1
+    return date_end, days
+
+
+def _candidate_display_title(view: dict) -> str:
+    notice = view.get("notice")
+    if isinstance(notice, dict):
+        project = notice.get("project")
+        role = notice.get("role")
+        if isinstance(project, str) and isinstance(role, str):
+            project = project.strip()
+            role = role.strip()
+            if project and role:
+                return f"{project} — {role}"
+    return str(view.get("title") or "Untitled Candidate")
+
+
+def _date_navigation(query: str, band: str, date_end: str, days: int) -> str:
+    selected_date = date.fromisoformat(date_end)
+
+    def href(target_date: date, target_days: int = days) -> str:
+        return "/candidates?" + urlencode(
+            {
+                "q": query,
+                "band": band,
+                "date": target_date.isoformat(),
+                "days": target_days,
+            }
+        )
+
+    previous = href(selected_date - timedelta(days=1))
+    today = href(date.today())
+    following = href(selected_date + timedelta(days=1))
+    toggle_days = 1 if days == 7 else 7
+    seven_days = href(selected_date, toggle_days)
+    seven_days_pressed = "true" if days == 7 else "false"
+    return (
+        f'<a class="date-nav" href="{_esc(previous)}" '
+        'aria-label="Previous day">&lt;</a>'
+        f'<a class="date-nav" href="{_esc(today)}">Today</a>'
+        f'<a class="date-nav" href="{_esc(following)}" '
+        'aria-label="Next day">&gt;</a>'
+        f'<a class="date-nav" href="{_esc(seven_days)}" '
+        f'aria-pressed="{seven_days_pressed}">7 days</a>'
+    )
 
 
 def _band_options(selected: str) -> str:
@@ -717,16 +814,17 @@ _CSS = """
 :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 body { margin: 0; background: #f4f1ea; color: #20251f; }
-header { padding: 20px 28px; background: #20342b; color: white; }
+header { padding: 12px 22px; background: #20342b; color: white; }
 header h1, header p { margin: 0; }
 header p { margin-top: 5px; color: #d8e2dc; }
-main { padding: 18px 28px 28px; }
-.filters { display: flex; gap: 12px; align-items: end; margin-bottom: 14px; }
+main { padding: 10px 22px 20px; }
+.filters { display: flex; gap: 9px; align-items: end; margin-bottom: 9px; }
 label { display: grid; gap: 5px; font-size: 12px; font-weight: 700; }
 input, select, button { border: 1px solid #b9b3a7; border-radius: 7px; padding: 8px 10px; font: inherit; }
-button { background: #284d3d; color: white; cursor: pointer; }
+button, .date-nav { background: #284d3d; color: white; cursor: pointer; }
 button.secondary { background: white; color: #31443b; }
-.score-workbench { height: calc(100vh - 170px); min-height: 570px; display: grid; grid-template-columns: minmax(250px, 32%) minmax(0, 68%); overflow: hidden; background: white; border: 1px solid #d8d2c7; border-radius: 14px; }
+.date-nav { border: 1px solid #b9b3a7; border-radius: 7px; padding: 8px 10px; font: inherit; text-decoration: none; }
+.score-workbench { height: calc(100vh - 132px); min-height: 570px; display: grid; grid-template-columns: minmax(250px, 29%) minmax(0, 71%); overflow: hidden; background: white; border: 1px solid #d8d2c7; }
 .candidate-list { overflow-y: auto; border-right: 1px solid #ddd7cc; background: #faf8f3; }
 .candidate-list-item { display: flex; gap: 12px; padding: 14px; color: inherit; text-decoration: none; border-bottom: 1px solid #e5dfd5; border-left: 4px solid transparent; }
 .candidate-list-item.selected { background: white; border-left-color: #315a48; }
@@ -734,39 +832,28 @@ button.secondary { background: white; color: #31443b; }
 .list-copy { min-width: 0; display: grid; gap: 5px; }
 .list-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list-copy small, .muted, .agent-metadata { color: #716d64; }
-.candidate-detail { min-width: 0; display: grid; grid-template-rows: auto minmax(150px, 1fr) auto; overflow: hidden; }
-.detail-heading { display: flex; justify-content: space-between; gap: 18px; padding: 18px 20px 12px; }
+.candidate-detail { min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.detail-heading { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 18px 10px; }
 .detail-heading h2 { margin: 0; }
-.eyebrow { margin: 0 0 4px; color: #6b746e; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.overall { min-width: 130px; display: grid; text-align: right; }
-.overall strong { font-size: 34px; line-height: 1; }
-.overall small { font-weight: 700; }
-.agent-original { font-size: 11px; color: #716d64; }
-.evidence-pane { overflow-y: auto; padding: 0 20px 18px; }
+.detail-score { font-size: 30px; line-height: 1; color: #20342b; }
+.evidence-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 18px 12px; }
 .evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.evidence-grid article { padding: 13px; background: #f8f6f1; border-radius: 10px; overflow-wrap: anywhere; }
+.evidence-grid article { padding: 11px; background: #f8f6f1; overflow-wrap: anywhere; }
 .evidence-grid h3 { margin: 0 0 9px; font-size: 13px; }
 dl { margin: 0; }
 dt { font-weight: 750; margin-top: 7px; }
 dd { margin: 3px 0 0 10px; }
 ul { margin: 6px 0; padding-left: 20px; }
-.score-pane { max-height: 320px; overflow: auto; border-top: 1px solid #d8d2c7; background: white; }
-.caps-bar { position: sticky; top: 0; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 9px 14px; background: #f0ede5; }
-.cap { padding: 4px 7px; border-radius: 999px; background: #f2d9a7; font-size: 11px; }
-.score-table { min-width: 760px; }
-.score-row { display: grid; grid-template-columns: minmax(170px, 1fr) 70px 110px minmax(190px, 1fr) 155px; align-items: center; gap: 9px; padding: 8px 14px; border-top: 1px solid #eee9df; }
-.score-header { position: sticky; top: 43px; z-index: 2; background: white; font-size: 11px; font-weight: 800; color: #6c6a63; }
-.score-row > span:first-child { display: grid; }
-.score-row small { font-size: 10px; color: #777168; }
-.correction-form { display: contents; }
-.correction-input { width: 100%; }
-.actions { display: flex; gap: 6px; }
-.actions form { display: inline; }
-.stale { color: #a14f35 !important; }
-.warning { margin: 0 0 10px; padding: 9px 12px; background: #fff1cf; border-radius: 8px; }
-.notice { margin: 0 0 10px; padding: 9px 12px; background: #fff1cf; border-radius: 8px; }
-.warning-inline { color: #8a6222 !important; }
-.agent-metadata { margin: 8px 14px 12px; font-size: 11px; }
+.score-pane { flex: 0 0 auto; max-height: 260px; border-top: 1px solid #8d948f; background: white; }
+.correction-grid-wrapper { overflow-x: auto; }
+.correction-grid { width: 100%; min-width: 620px; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+.correction-grid th, .correction-grid td { border: 1px solid #aeb4b0; padding: 5px; vertical-align: top; }
+.correction-grid thead th { background: #dfe8e2; color: #20342b; text-align: left; }
+.correction-grid th:first-child { width: 110px; background: #edf2ee; }
+.correction-form { display: grid; grid-template-columns: minmax(54px, .55fr) minmax(90px, 1fr); gap: 4px; }
+.correction-form input { min-width: 0; width: 100%; border-radius: 0; padding: 4px 5px; font-size: 11px; }
+.actions { grid-column: 1 / -1; display: flex; gap: 4px; }
+.actions button { border-radius: 0; padding: 4px 6px; font-size: 10px; }
 .empty { padding: 25px; background: white; border-radius: 12px; }
 .band-top_priority .list-score, .overall.band-top_priority { color: #0d6a42; }
 .band-strong_candidate .list-score, .overall.band-strong_candidate { color: #34724f; }
@@ -790,22 +877,29 @@ document.querySelectorAll('.score-pane').forEach((pane) => {
   const agent = JSON.parse(pane.dataset.agentSubscores || '{}');
   const active = JSON.parse(pane.dataset.activeCorrections || '{}');
   const caps = JSON.parse(pane.dataset.capValues || '[]');
-  const thresholds = JSON.parse(pane.dataset.bandThresholds || '{}');
   pane.querySelectorAll('.correction-input').forEach((input) => {
     input.addEventListener('input', () => {
+      const feedback = input.form.querySelector('.feedback-input');
+      if (input.value !== '') {
+        feedback.disabled = false;
+      } else {
+        feedback.disabled = true;
+      }
       const merged = {...agent, ...active};
-      const component = input.closest('.score-row').dataset.component;
+      const component = input.closest('td').dataset.component;
       if (input.value !== '') merged[component] = Number(input.value);
       let overall = Object.values(merged).reduce((sum, value) => sum + Number(value), 0);
       if (caps.length) overall = Math.min(overall, ...caps);
       overall = Math.max(0, Math.min(100, Math.round(overall)));
-      let band = 'not_worth_applying_today';
-      if (overall >= thresholds.top_priority) band = 'top_priority';
-      else if (overall >= thresholds.strong_candidate) band = 'strong_candidate';
-      else if (overall >= thresholds.maybe_review) band = 'maybe_review';
-      else if (overall >= thresholds.low_priority) band = 'low_priority';
       document.querySelector('[data-overall]').textContent = overall;
-      document.querySelector('[data-band]').textContent = band.replaceAll('_', ' ');
+    });
+  });
+  pane.querySelectorAll('.correction-input, .feedback-input').forEach((input) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.currentTarget.form.requestSubmit();
+      }
     });
   });
 });

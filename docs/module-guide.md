@@ -17,7 +17,7 @@ Use this guide to choose the smallest set of files to read for a task.
 ## Email And Parsing
 
 - Start with `src/backstage_agent/email_client.py` for IMAP fetching, date filters, subject keywords, and MIME decoding.
-- Use `src/backstage_agent/parser.py` for Backstage email digest parsing and fallback casting notice parsing.
+- Use `src/backstage_agent/parser.py` for Backstage email digest parsing and fallback casting notice parsing. Digest subjects such as `... - Jul 23` supply the project date and take precedence over the message receipt date.
 - Use `src/backstage_agent/project_page_parser.py` when project-page HTML, embedded JSON, shooting dates, locations, or page-derived roles are involved.
 - Relevant tests: `tests/test_email_client.py`, `tests/test_parser.py`, `tests/test_project_page_parser.py`.
 
@@ -35,8 +35,8 @@ Use this guide to choose the smallest set of files to read for a task.
 
 ## Storage And Dashboard
 
-- Start with `src/backstage_agent/storage.py` for SQLite schema, persistence, search filters, status counts, and lightweight migrations.
-- Use `src/backstage_agent/ui.py` for workbench rendering, component correction merge/validation, stale-version handling, independent Save/Reset/Reconfirm actions, and corrected score preview.
+- Start with `src/backstage_agent/storage.py` for SQLite schema, persistence, search filters, status counts, and lightweight migrations. Candidate workbench searches use the subject-derived project date when present, falling back to the last-seen or created date, and support an exact day (`days=1`) or inclusive seven-day window ending on the selected date (`days=7`).
+- Use `src/backstage_agent/ui.py` for the compact workbench rendering, previous/today/next and seven-day navigation, component correction merge/validation, stale-version handling, independent Save/Reset/Reconfirm actions, Enter-to-save behavior, and corrected score preview. The selected date and window survive candidate navigation and correction redirects; simplified evidence occupies the upper detail area and the two-row agent/correction grid stays at the bottom.
 - Existing legacy decision/application rows are inert and have no runtime readers or writers.
 - Candidate rows include score JSON with resolved scoring snapshots, feature JSON, requirement-match JSON, ranked band, rank position, and draft-suggestion fields. Current corrections live separately in `candidate_score_corrections` under stable candidate/component identities.
 - Relevant tests: `tests/test_storage_dashboard.py`, `tests/test_candidate_storage.py`, `tests/test_ui_labels.py`, `tests/test_ui_candidates.py`.

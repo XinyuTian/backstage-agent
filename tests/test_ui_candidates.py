@@ -1,10 +1,14 @@
 import json
+from datetime import date
 from html.parser import HTMLParser
 
+import backstage_agent.ui as ui
 from backstage_agent.ui import (
     _candidate_workbench_view,
+    _correction_redirect,
     _get_route,
     _post_route,
+    _render_candidate_detail,
     _render_candidates_index,
     _reset_component_correction_from_params,
     _save_component_correction_from_params,
@@ -78,9 +82,18 @@ class FakeStore:
         self.saved = None
         self.deleted = None
 
-    def search_candidate_workbench_rows(self, query="", band="all", limit=200):
+    def search_candidate_workbench_rows(
+        self,
+        query="",
+        band="all",
+        date_end="",
+        days=1,
+        limit=200,
+    ):
         self.query = query
         self.band = band
+        self.date_end = date_end
+        self.days = days
         return self.rows
 
     def corrections_for_candidate_keys(self, keys):
@@ -167,15 +180,155 @@ def test_render_candidates_index_shows_english_workbench():
     assert 'class="candidate-list"' in html
     assert 'class="evidence-pane"' in html
     assert 'class="score-pane"' in html
-    assert "Play - Lead" in html
-    assert "Overall" in html
-    assert "Agent" in html
-    assert "Correction" in html
-    assert "Reason (optional)" in html
-    assert "Save" in html
+    assert "Play — Lead" in html
+    assert 'class="correction-grid"' in html
+    assert "Agent score" in html
+    assert "Your correction" in html
     assert "Reset" in html
     assert "Human score" not in html
     assert 'lang="en"' in html
+
+
+def test_workbench_filter_controls_and_links_preserve_date_context():
+    store = FakeStore(corrections=[_correction()])
+    html = _render_candidates_index(
+        store,
+        {"q": ["summer"], "date": ["2026-07-23"], "days": ["1"]},
+        rules=_rules(),
+    )
+
+    assert "<h1>Backstage Candidates</h1>" in html
+    assert "Ranked mutual-selection scores and calibration feedback" not in html
+    assert 'placeholder="Search project or role"' in html
+    assert ">Search<" not in html
+    assert ">Date<" not in html
+    assert "Today" in html
+    assert "7 days" in html
+    assert 'aria-label="Previous day"' in html
+    assert 'aria-label="Next day"' in html
+    assert store.date_end == "2026-07-23"
+    assert store.days == 1
+    assert "date=2026-07-23" in html
+    assert "days=1" in html
+    assert 'name="date" value="2026-07-23"' in html
+    assert 'name="days" value="1"' in html
+
+
+def test_date_navigation_uses_filter_button_style_and_literal_arrow_text():
+    html = _render_candidates_index(
+        FakeStore(),
+        {"date": ["2026-07-23"], "days": ["1"]},
+        rules=_rules(),
+    )
+
+    assert 'aria-label="Previous day">&lt;</a>' in html
+    assert 'aria-label="Next day">&gt;</a>' in html
+    assert "←" not in html
+    assert "→" not in html
+    assert html.count('class="date-nav"') == 4
+    assert "button, .date-nav { background: #284d3d; color: white; cursor: pointer; }" in html
+    assert (
+        ".date-nav { border: 1px solid #b9b3a7; border-radius: 7px; "
+        "padding: 8px 10px; font: inherit; text-decoration: none; }"
+        in html
+    )
+
+
+def test_seven_day_control_toggles_window_and_preserves_filter_context():
+    one_day_html = _render_candidates_index(
+        FakeStore(),
+        {"q": ["summer"], "date": ["2026-07-23"], "days": ["1"]},
+        rules=_rules(),
+    )
+    seven_day_html = _render_candidates_index(
+        FakeStore(),
+        {"q": ["summer"], "date": ["2026-07-23"], "days": ["7"]},
+        rules=_rules(),
+    )
+
+    assert (
+        'href="/candidates?q=summer&amp;band=all&amp;date=2026-07-23&amp;days=7"'
+        in one_day_html
+    )
+    assert 'aria-pressed="false">7 days</a>' in one_day_html
+    assert (
+        'href="/candidates?q=summer&amp;band=all&amp;date=2026-07-23&amp;days=1"'
+        in seven_day_html
+    )
+    assert 'aria-pressed="true">7 days</a>' in seven_day_html
+
+
+def test_date_filter_context_normalizes_invalid_values():
+    store = FakeStore()
+    html = _render_candidates_index(
+        store,
+        {"date": ["not-a-date"], "days": ["30"]},
+        rules=_rules(),
+    )
+
+    today = date.today().isoformat()
+    assert store.date_end == today
+    assert store.days == 1
+    assert f'name="date" value="{today}"' in html
+
+    seven_day_store = FakeStore()
+    _render_candidates_index(
+        seven_day_store,
+        {"date": ["2026-07-23"], "days": ["7"]},
+        rules=_rules(),
+    )
+    assert seven_day_store.date_end == "2026-07-23"
+    assert seven_day_store.days == 7
+
+
+def test_date_filter_rejects_non_hyphenated_and_week_iso_forms():
+    today = date.today().isoformat()
+    for raw_date in ("20260723", "2026-W30-4"):
+        store = FakeStore()
+        _render_candidates_index(
+            store,
+            {"date": [raw_date], "days": ["1"]},
+            rules=_rules(),
+        )
+        assert store.date_end == today
+
+
+def test_candidate_display_title_uses_structured_project_and_role_names():
+    view = _candidate_workbench_view(_row(), [], _rules())
+
+    assert ui._candidate_display_title(view) == "Play — Lead"
+
+    html = _render_candidates_index(
+        FakeStore(),
+        {"date": ["2026-07-23"]},
+        rules=_rules(),
+    )
+    assert html.count("Play — Lead") == 2
+    assert "Play - Lead" not in html
+
+
+def test_candidate_display_title_preserves_unrecognized_title():
+    view = _candidate_workbench_view(_row(), [], _rules())
+    view["title"] = "Standalone Project"
+    view["notice"] = {}
+
+    assert ui._candidate_display_title(view) == "Standalone Project"
+
+
+def test_correction_redirect_preserves_filter_context():
+    location = _correction_redirect(
+        {
+            "candidate_id": ["1"],
+            "q": ["summer"],
+            "date": ["2026-07-23"],
+            "days": ["7"],
+        },
+        "saved",
+    )
+
+    assert "q=summer" in location
+    assert "date=2026-07-23" in location
+    assert "days=7" in location
 
 
 def test_workbench_does_not_render_nested_forms():
@@ -206,24 +359,112 @@ def test_workbench_does_not_render_nested_forms():
     assert parser.max_form_depth == 1
 
 
-def test_compatibility_warning_renders_inside_scrollable_evidence_pane():
+def test_candidate_detail_renders_only_compact_evidence_and_correction_grid():
     row = _row()
     score_payload = json.loads(row["score_json"])
     score_payload.pop("scoring_snapshot")
     row["score_json"] = json.dumps(score_payload)
-    html = _render_candidates_index(
-        FakeStore(rows=[row], corrections=[]),
-        {"id": ["1"]},
-        rules=_rules(),
+    view = _candidate_workbench_view(row, [], _rules())
+
+    html = _render_candidate_detail(
+        view,
+        query="summer",
+        band="all",
+        date_end="2026-07-23",
+        days=7,
     )
 
-    assert '<section class="evidence-pane">\n        <p class="warning">' in html
+    assert "Play — Lead" in html
+    assert 'class="detail-score"' in html
+    assert 'class="evidence-pane"' in html
+    assert "Extracted features" in html
+    assert "Requirement matches" in html
+    assert 'class="correction-grid"' in html
+    assert "Agent score" in html
+    assert "Your correction" in html
+    for text in (
+        "Overall",
+        "Low Priority",
+        "This candidate predates scoring snapshots",
+        "Listing",
+        "Active caps",
+        "No active caps",
+        "Positive drivers",
+        "Negative drivers",
+        "Score trace",
+        "Edit a Correct cell",
+    ):
+        assert text not in html
+
+
+def test_correction_grid_has_component_columns_and_exactly_two_data_rows():
+    class TableParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.in_grid = False
+            self.section = ""
+            self.header_cells = 0
+            self.body_rows = 0
+            self.body_cells = []
+            self.current_body_cells = 0
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            if tag == "table" and attributes.get("class") == "correction-grid":
+                self.in_grid = True
+            elif self.in_grid and tag in ("thead", "tbody"):
+                self.section = tag
+            elif self.in_grid and self.section == "thead" and tag in ("th", "td"):
+                self.header_cells += 1
+            elif self.in_grid and self.section == "tbody" and tag == "tr":
+                self.current_body_cells = 0
+            elif self.in_grid and self.section == "tbody" and tag in ("th", "td"):
+                self.current_body_cells += 1
+
+        def handle_endtag(self, tag):
+            if self.in_grid and self.section == "tbody" and tag == "tr":
+                self.body_rows += 1
+                self.body_cells.append(self.current_body_cells)
+            elif self.in_grid and tag in ("thead", "tbody"):
+                self.section = ""
+            elif self.in_grid and tag == "table":
+                self.in_grid = False
+
+    view = _candidate_workbench_view(_row(), [_correction()], _rules())
+    parser = TableParser()
+    parser.feed(
+        _render_candidate_detail(
+            view,
+            query="summer",
+            band="all",
+            date_end="2026-07-23",
+            days=7,
+        )
+    )
+
+    expected_cells = len(view["components"]) + 1
+    assert parser.header_cells == expected_cells
+    assert parser.body_rows == 2
+    assert parser.body_cells == [expected_cells, expected_cells]
 
 
 def test_render_candidates_index_handles_empty_results():
     html = _render_candidates_index(FakeStore(rows=[]), {}, rules=_rules())
 
     assert "No candidates match the current filters." in html
+
+
+def test_correction_input_enables_feedback_without_stealing_focus():
+    html = _render_candidates_index(
+        FakeStore(corrections=[_correction()]),
+        {"id": ["1"]},
+        rules=_rules(),
+    )
+
+    assert "feedback.disabled = false;" in html
+    assert "feedback.focus()" not in html
+    assert html.count("event.currentTarget.form.requestSubmit();") == 1
+    assert "pane.querySelectorAll('.correction-input, .feedback-input')" in html
 
 
 def test_save_component_correction_uses_persisted_identity_and_optional_reason():

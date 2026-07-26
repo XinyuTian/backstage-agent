@@ -342,6 +342,8 @@ class DecisionStore:
         self,
         query: str = "",
         band: str = "all",
+        date_end: str = "",
+        days: int = 1,
         limit: int = 200,
     ) -> list[sqlite3.Row]:
         clauses = []
@@ -354,6 +356,14 @@ class DecisionStore:
         if band != "all":
             clauses.append("c.score_band = ?")
             params.append(band)
+        if date_end:
+            clauses.append(
+                """
+                date(COALESCE(p.project_date, p.last_seen_date, p.created_at))
+                BETWEEN date(?, '-' || (? - 1) || ' days') AND date(?)
+                """
+            )
+            params.extend([date_end, 7 if days == 7 else 1, date_end])
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         params.append(limit)
         with self._connect() as conn:
@@ -365,13 +375,13 @@ class DecisionStore:
                       c.*,
                       p.last_seen_date,
                       p.project_date AS source_project_date,
-                      date(COALESCE(p.last_seen_date, p.project_date, p.created_at))
+                      date(COALESCE(p.project_date, p.last_seen_date, p.created_at))
                         AS effective_project_date
                     FROM candidates AS c
                     JOIN projects AS p ON p.id = c.source_project_id
                     {where}
                     ORDER BY
-                      date(COALESCE(p.last_seen_date, p.project_date, p.created_at)) DESC,
+                      date(COALESCE(p.project_date, p.last_seen_date, p.created_at)) DESC,
                       c.id DESC
                     LIMIT ?
                     """,

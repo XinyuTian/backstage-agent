@@ -18,6 +18,8 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Changed
 
+- Made Backstage digest subject dates take precedence over message receipt dates, and use the resulting project date for candidate workbench ordering and exact-day/seven-day filtering.
+- Compacted the candidate workbench with a green header, date navigation, simplified evidence, and a bottom spreadsheet-style component grid containing only agent-score and correction rows; correction links and saves preserve the selected date window.
 - Replaced the candidate card wall with an English left-list/right-detail score-review workbench that overlays corrections without mutating official candidate rows.
 - Added the mutual-selection scoring-system diagram to `README.md`.
 - Made `scan` the scoring-first daily workflow: it refreshes projects and roles, scores and ranks candidates for the scan date, preserves existing scores by default, and no longer invokes legacy screening, review, or application drafting. Legacy data, dashboard views, and compatibility code remain available.
@@ -31,6 +33,8 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Fixed
 
+- Styled all candidate date-navigation controls like the filled green Filter button and replaced icon arrows with compact `<` and `>` labels.
+- Fixed candidate-workbench correction typing so enabling feedback no longer steals focus from multi-digit numeric entry, and made the visible `7 days` control toggle back to exact-day mode with an accessible active state.
 - Fixed role gender local screening so explicit role gender requirements take precedence over softer title/pronoun heuristics, preventing titles like `Run for Your Wife - John Smith` from falling through to role LLM screening.
 - Fixed candidate scoring follow-through so project gate/reviewer outcomes influence deterministic score caps, candidate ranks are global across the scan, dashboard feedback records durable corrections, feature extraction obeys the scan LLM budget, and packaged CLI runs can load scoring rules outside the repository directory.
 - Fixed candidate rescoring for real model outputs by normalizing loose feature containers, retrying malformed feature JSON once, tolerating string-valued requirements, and adding an exact-date `rescore-candidates` command for stored projects and roles.

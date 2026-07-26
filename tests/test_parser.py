@@ -1,5 +1,23 @@
+from datetime import date, datetime
+
 from backstage_agent.models import EmailMessage
 from backstage_agent.parser import parse_casting_notices, parse_project_notices
+
+
+def test_parse_digest_assigns_subject_date_to_every_notice():
+    message = EmailMessage(
+        message_id="subject-date",
+        subject="4 New Roles Available for basic filter - Jul 23",
+        sender="Backstage",
+        received_at=datetime(2026, 7, 24, 9, 0),
+        html="",
+        text="Project: Example\nRole: Lead",
+    )
+
+    notices = parse_casting_notices(message)
+
+    assert notices
+    assert all(notice.project_date == date(2026, 7, 23) for notice in notices)
 
 
 def test_parse_casting_notice_from_plain_text():
