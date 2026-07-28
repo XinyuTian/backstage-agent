@@ -576,6 +576,8 @@ def test_workbench_view_marks_changed_maximum_stale():
 
     assert view["components"]["role_value"]["stale"] is True
     assert view["components"]["role_value"]["display_score"] == 15
+    assert view["agent_pre_cap_total"] == 23
+    assert view["display_pre_cap_total"] == 23
     assert view["display_overall"] == 23
 
 
@@ -612,6 +614,12 @@ def test_render_candidates_index_shows_english_workbench():
     assert 'class="correction-grid"' in html
     assert "Agent score" in html
     assert "Your correction" in html
+    assert "Pre-cap total" in html
+    assert "data-pre-cap-total" in html
+    assert (
+        "document.querySelector('[data-pre-cap-total]').textContent = preCapTotal;"
+        in html
+    )
     assert "Reset" in html
     assert "Human score" not in html
     assert 'lang="en"' in html
@@ -948,7 +956,7 @@ def test_correction_grid_has_component_columns_and_exactly_two_data_rows():
         )
     )
 
-    expected_cells = len(view["components"]) + 1
+    expected_cells = len(view["components"]) + 2
     assert parser.header_cells == expected_cells
     assert parser.body_rows == 2
     assert parser.body_cells == [expected_cells, expected_cells]
