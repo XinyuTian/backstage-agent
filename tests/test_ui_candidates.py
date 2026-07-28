@@ -622,12 +622,55 @@ def test_render_candidates_index_shows_english_workbench():
         "pane.querySelector('[data-pre-cap-total]').textContent = preCapTotal;"
         in html
     )
-    assert "pane.querySelector('[data-overall]').textContent = overall;" in html
+    assert (
+        "pane.closest('.candidate-detail').querySelector('[data-overall]').textContent"
+        " = overall;"
+        in html
+    )
+    assert "pane.querySelector('[data-overall]')" not in html
     assert "document.querySelector('[data-pre-cap-total]')" not in html
     assert "document.querySelector('[data-overall]')" not in html
     assert "Reset" in html
     assert "Human score" not in html
     assert 'lang="en"' in html
+
+
+def test_overall_preview_target_and_score_pane_share_candidate_detail_wrapper():
+    class DetailParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.detail_depth = 0
+            self.overall_in_detail = False
+            self.score_pane_in_detail = False
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            classes = set(attributes.get("class", "").split())
+            if "candidate-detail" in classes:
+                self.detail_depth += 1
+            elif self.detail_depth and "score-pane" in classes:
+                self.score_pane_in_detail = True
+                self.detail_depth += 1
+            elif self.detail_depth and tag == "section":
+                self.detail_depth += 1
+            elif self.detail_depth and "data-overall" in attributes:
+                self.overall_in_detail = True
+
+        def handle_endtag(self, tag):
+            if tag == "section" and self.detail_depth:
+                self.detail_depth -= 1
+
+    parser = DetailParser()
+    parser.feed(
+        _render_candidates_index(
+            FakeStore(corrections=[_correction()]),
+            {"id": ["1"]},
+            rules=_rules(),
+        )
+    )
+
+    assert parser.overall_in_detail is True
+    assert parser.score_pane_in_detail is True
 
 
 def test_render_candidates_index_includes_accessible_workbench_divider():

@@ -1363,7 +1363,7 @@ document.querySelectorAll('.score-pane').forEach((pane) => {
       if (caps.length) overall = Math.min(overall, ...caps);
       overall = Math.max(0, Math.min(100, Math.round(overall)));
       pane.querySelector('[data-pre-cap-total]').textContent = preCapTotal;
-      pane.querySelector('[data-overall]').textContent = overall;
+      pane.closest('.candidate-detail').querySelector('[data-overall]').textContent = overall;
     });
   });
   pane.querySelectorAll('.correction-input, .feedback-input').forEach((input) => {
