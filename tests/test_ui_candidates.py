@@ -557,6 +557,8 @@ def test_workbench_view_overlays_active_component_correction():
 
     assert view["components"]["role_value"]["display_score"] == 10
     assert view["components"]["role_value"]["active"] is True
+    assert view["agent_pre_cap_total"] == 23
+    assert view["display_pre_cap_total"] == 18
     assert view["display_overall"] == 18
     assert view["agent_overall"] == 23
 
@@ -617,9 +619,12 @@ def test_render_candidates_index_shows_english_workbench():
     assert "Pre-cap total" in html
     assert "data-pre-cap-total" in html
     assert (
-        "document.querySelector('[data-pre-cap-total]').textContent = preCapTotal;"
+        "pane.querySelector('[data-pre-cap-total]').textContent = preCapTotal;"
         in html
     )
+    assert "pane.querySelector('[data-overall]').textContent = overall;" in html
+    assert "document.querySelector('[data-pre-cap-total]')" not in html
+    assert "document.querySelector('[data-overall]')" not in html
     assert "Reset" in html
     assert "Human score" not in html
     assert 'lang="en"' in html

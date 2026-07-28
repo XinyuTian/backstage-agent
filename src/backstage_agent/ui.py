@@ -1362,8 +1362,8 @@ document.querySelectorAll('.score-pane').forEach((pane) => {
       let overall = preCapTotal;
       if (caps.length) overall = Math.min(overall, ...caps);
       overall = Math.max(0, Math.min(100, Math.round(overall)));
-      document.querySelector('[data-pre-cap-total]').textContent = preCapTotal;
-      document.querySelector('[data-overall]').textContent = overall;
+      pane.querySelector('[data-pre-cap-total]').textContent = preCapTotal;
+      pane.querySelector('[data-overall]').textContent = overall;
     });
   });
   pane.querySelectorAll('.correction-input, .feedback-input').forEach((input) => {
