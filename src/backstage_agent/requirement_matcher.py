@@ -55,6 +55,13 @@ def _requirement_is_empty(value: object) -> bool:
     if isinstance(value, (list, tuple)):
         return not value or all(_requirement_is_empty(item) for item in value)
     if isinstance(value, dict):
+        substantive_value = value.get("value")
+        if (
+            isinstance(substantive_value, str)
+            and substantive_value.strip().lower() == "not specified"
+            and _requirement_is_empty(value.get("evidence"))
+        ):
+            return True
         meaningful = [
             item
             for key, item in value.items()

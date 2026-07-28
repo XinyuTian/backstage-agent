@@ -145,6 +145,46 @@ def test_empty_requirements_are_ignored(actor_profile_factory):
     assert [match.requirement_key for match in matches] == ["real_requirement"]
 
 
+def test_not_specified_placeholder_wrappers_are_ignored(actor_profile_factory):
+    features = _features(
+        {
+            "requirement_1": {
+                "type": "age_range",
+                "value": "20-30",
+                "evidence": "Day Player, 20-30",
+            },
+            "requirement_2": {
+                "type": "gender",
+                "value": "not specified",
+                "evidence": None,
+            },
+            "requirement_3": {
+                "type": "ethnicity",
+                "value": "NoT SpEcIfIeD",
+                "evidence": "",
+            },
+            "requirement_4": {
+                "type": "location",
+                "value": "Antioch, CA",
+                "evidence": "Shooting locations: Antioch, CA",
+            },
+            "requirement_5": {
+                "type": "special_instruction",
+                "value": "not specified",
+                "evidence": "Applicant must confirm this requirement directly.",
+            },
+        }
+    )
+
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+
+    assert [match.requirement_key for match in matches] == [
+        "requirement_1",
+        "requirement_4",
+        "requirement_5",
+    ]
+
+
 def test_language_requirement_checks_profile_skills(actor_profile_factory):
     profile = actor_profile_factory(skills=["Mandarin", "Improvisation"])
     features = _features(
