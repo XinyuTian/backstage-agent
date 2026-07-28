@@ -61,7 +61,19 @@ def _requirement_is_empty(value: object) -> bool:
             and substantive_value.strip().lower() == "not specified"
             and _requirement_is_empty(value.get("evidence"))
         ):
-            return True
+            other_substantive_values = [
+                item
+                for key, item in value.items()
+                if key not in {"required", "optional", "type", "value", "evidence"}
+            ]
+            return all(
+                _requirement_is_empty(item)
+                or (
+                    isinstance(item, str)
+                    and item.strip().lower() == "not specified"
+                )
+                for item in other_substantive_values
+            )
         meaningful = [
             item
             for key, item in value.items()

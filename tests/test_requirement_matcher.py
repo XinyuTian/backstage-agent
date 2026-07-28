@@ -185,6 +185,34 @@ def test_not_specified_placeholder_wrappers_are_ignored(actor_profile_factory):
     ]
 
 
+def test_not_specified_wrappers_with_other_substantive_fields_are_retained(
+    actor_profile_factory,
+):
+    features = _features(
+        {
+            "union_constraint": {
+                "type": "union_status",
+                "value": "not specified",
+                "evidence": None,
+                "constraint": "Must be SAG-AFTRA",
+            },
+            "capped_requirement": {
+                "type": "special_instruction",
+                "value": "NOT SPECIFIED",
+                "evidence": "",
+                "score_cap": 50,
+            },
+        }
+    )
+
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+
+    assert [match.requirement_key for match in matches] == [
+        "union_constraint",
+        "capped_requirement",
+    ]
+
+
 def test_language_requirement_checks_profile_skills(actor_profile_factory):
     profile = actor_profile_factory(skills=["Mandarin", "Improvisation"])
     features = _features(
