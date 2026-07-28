@@ -18,6 +18,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Changed
 
+- Added the candidate grid's uncapped component sum as the first `Pre-cap total` column so score-cap effects are visible during review.
 - Replaced nested candidate evidence payloads with an adaptive single-column detail view that omits empty sections, flattens requirements, and keeps original listing text collapsed.
 - Made the candidate workbench's 22/78 desktop split adjustable by pointer drag or keyboard (16-pixel arrow steps, Home, and End), while keeping the divider hidden on mobile and restoring the default split on reload.
 - Made Backstage digest subject dates take precedence over message receipt dates, and use the resulting project date for candidate workbench ordering and exact-day/seven-day filtering.
@@ -35,6 +36,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Fixed
 
+- Prevented empty extracted requirements from being treated as mandatory mismatches or triggering candidate score caps.
 - Styled all candidate date-navigation controls like the filled green Filter button and replaced icon arrows with compact `<` and `>` labels.
 - Fixed candidate-workbench correction typing so enabling feedback no longer steals focus from multi-digit numeric entry, and made the visible `7 days` control toggle back to exact-day mode with an accessible active state.
 - Fixed role gender local screening so explicit role gender requirements take precedence over softer title/pronoun heuristics, preventing titles like `Run for Your Wife - John Smith` from falling through to role LLM screening.
