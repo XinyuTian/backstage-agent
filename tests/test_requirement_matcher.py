@@ -125,6 +125,26 @@ def test_unknown_string_requirement_needs_user_input(actor_profile_factory):
     assert matches[0].status is RequirementStatus.UNKNOWN_NEEDS_USER_INPUT
 
 
+def test_empty_requirements_are_ignored(actor_profile_factory):
+    features = _features(
+        {
+            "null_value": None,
+            "empty_text": "   ",
+            "empty_list": [],
+            "empty_object": {},
+            "empty_wrapper": {"required": True, "evidence": None},
+            "real_requirement": {
+                "required": True,
+                "evidence": "Must juggle fire.",
+            },
+        }
+    )
+
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+
+    assert [match.requirement_key for match in matches] == ["real_requirement"]
+
+
 def test_language_requirement_checks_profile_skills(actor_profile_factory):
     profile = actor_profile_factory(skills=["Mandarin", "Improvisation"])
     features = _features(
