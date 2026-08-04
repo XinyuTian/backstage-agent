@@ -36,6 +36,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Fixed
 
+- Fixed incompatible casting-gender requirements so canonical and numbered extraction shapes use stored profile genders and receive the existing mandatory-mismatch cap instead of unknown-requirement partial credit.
 - Prevented empty extracted requirements from being treated as mandatory mismatches or triggering candidate score caps.
 - Styled all candidate date-navigation controls like the filled green Filter button and replaced icon arrows with compact `<` and `>` labels.
 - Fixed candidate-workbench correction typing so enabling feedback no longer steals focus from multi-digit numeric entry, and made the visible `7 days` control toggle back to exact-day mode with an accessible active state.

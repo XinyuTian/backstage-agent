@@ -4,6 +4,7 @@ from backstage_agent.candidate_models import (
     RequirementStatus,
     ScoreBand,
 )
+from backstage_agent.requirement_matcher import match_requirements
 from backstage_agent.scoring import (
     build_scoring_snapshot,
     load_scoring_rules,
@@ -97,6 +98,25 @@ def test_mandatory_requirement_not_met_caps_score():
     assert score.overall_score == 15
     assert score.score_band is ScoreBand.NOT_WORTH_APPLYING_TODAY
     assert score.score_caps == ["mandatory_requirement_not_met"]
+
+
+def test_required_gender_mismatch_uses_existing_mandatory_cap(actor_profile_factory):
+    features = _features(
+        requirements={
+            "gender_male": {
+                "required": True,
+                "evidence": "Looking for: Male, 25-35",
+            }
+        }
+    )
+    rules = _rules()
+    matches = match_requirements(
+        features, actor_profile_factory(genders=["female"]), rules
+    )
+    score = score_candidate(features, matches, rules)
+    assert score.overall_score == 15
+    assert score.score_caps == ["mandatory_requirement_not_met"]
+    assert "gender requirement not met" in score.negative_drivers
 
 
 def test_missing_critical_data_caps_score_at_sixty():
