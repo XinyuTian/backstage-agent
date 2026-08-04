@@ -257,6 +257,10 @@ def _candidate_workbench_view(row, corrections, current_rules: dict) -> dict:
             "version_warning": version_warning,
         }
 
+    agent_pre_cap_total = sum(
+        int(component["agent_score"]) for component in components.values()
+    )
+    display_pre_cap_total = sum(int(value) for value in merged.values())
     caps = [
         str(cap)
         for cap in score_payload.get("score_caps", [])
@@ -285,6 +289,8 @@ def _candidate_workbench_view(row, corrections, current_rules: dict) -> dict:
         "agent_band": str(_row_value(row, "score_band") or ""),
         "display_overall": display_overall,
         "display_band": display_band_value,
+        "agent_pre_cap_total": agent_pre_cap_total,
+        "display_pre_cap_total": display_pre_cap_total,
         "agent_rank": _row_value(row, "rank_position"),
         "agent_draft_suggestion": bool(_row_value(row, "draft_suggestion")),
         "components": components,
@@ -502,15 +508,24 @@ def _render_component_grid(
         f'<th scope="col">{_esc(component["label"])}</th>'
         for component in components
     )
+    headings = '<th scope="col">Pre-cap total</th>' + headings
     agent_scores = "".join(
         f'<td>{component["agent_score"]} / {component["maximum"]}</td>'
         for component in components
+    )
+    agent_scores = (
+        f'<td data-agent-pre-cap-total>{view["agent_pre_cap_total"]}</td>'
+        + agent_scores
     )
     correction_cells = "".join(
         _render_component_correction_cell(
             view, component, query, band, date_end, days
         )
         for component in components
+    )
+    correction_cells = (
+        f'<td data-pre-cap-total>{view["display_pre_cap_total"]}</td>'
+        + correction_cells
     )
     return f"""
       <div class="correction-grid-wrapper">
@@ -1342,10 +1357,13 @@ document.querySelectorAll('.score-pane').forEach((pane) => {
       const merged = {...agent, ...active};
       const component = input.closest('td').dataset.component;
       if (input.value !== '') merged[component] = Number(input.value);
-      let overall = Object.values(merged).reduce((sum, value) => sum + Number(value), 0);
+      const preCapTotal = Object.values(merged)
+        .reduce((sum, value) => sum + Number(value), 0);
+      let overall = preCapTotal;
       if (caps.length) overall = Math.min(overall, ...caps);
       overall = Math.max(0, Math.min(100, Math.round(overall)));
-      document.querySelector('[data-overall]').textContent = overall;
+      pane.querySelector('[data-pre-cap-total]').textContent = preCapTotal;
+      pane.closest('.candidate-detail').querySelector('[data-overall]').textContent = overall;
     });
   });
   pane.querySelectorAll('.correction-input, .feedback-input').forEach((input) => {

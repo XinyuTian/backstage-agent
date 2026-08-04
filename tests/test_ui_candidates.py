@@ -557,6 +557,8 @@ def test_workbench_view_overlays_active_component_correction():
 
     assert view["components"]["role_value"]["display_score"] == 10
     assert view["components"]["role_value"]["active"] is True
+    assert view["agent_pre_cap_total"] == 23
+    assert view["display_pre_cap_total"] == 18
     assert view["display_overall"] == 18
     assert view["agent_overall"] == 23
 
@@ -576,6 +578,8 @@ def test_workbench_view_marks_changed_maximum_stale():
 
     assert view["components"]["role_value"]["stale"] is True
     assert view["components"]["role_value"]["display_score"] == 15
+    assert view["agent_pre_cap_total"] == 23
+    assert view["display_pre_cap_total"] == 23
     assert view["display_overall"] == 23
 
 
@@ -612,9 +616,61 @@ def test_render_candidates_index_shows_english_workbench():
     assert 'class="correction-grid"' in html
     assert "Agent score" in html
     assert "Your correction" in html
+    assert "Pre-cap total" in html
+    assert "data-pre-cap-total" in html
+    assert (
+        "pane.querySelector('[data-pre-cap-total]').textContent = preCapTotal;"
+        in html
+    )
+    assert (
+        "pane.closest('.candidate-detail').querySelector('[data-overall]').textContent"
+        " = overall;"
+        in html
+    )
+    assert "pane.querySelector('[data-overall]')" not in html
+    assert "document.querySelector('[data-pre-cap-total]')" not in html
+    assert "document.querySelector('[data-overall]')" not in html
     assert "Reset" in html
     assert "Human score" not in html
     assert 'lang="en"' in html
+
+
+def test_overall_preview_target_and_score_pane_share_candidate_detail_wrapper():
+    class DetailParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.detail_depth = 0
+            self.overall_in_detail = False
+            self.score_pane_in_detail = False
+
+        def handle_starttag(self, tag, attrs):
+            attributes = dict(attrs)
+            classes = set(attributes.get("class", "").split())
+            if "candidate-detail" in classes:
+                self.detail_depth += 1
+            elif self.detail_depth and "score-pane" in classes:
+                self.score_pane_in_detail = True
+                self.detail_depth += 1
+            elif self.detail_depth and tag == "section":
+                self.detail_depth += 1
+            elif self.detail_depth and "data-overall" in attributes:
+                self.overall_in_detail = True
+
+        def handle_endtag(self, tag):
+            if tag == "section" and self.detail_depth:
+                self.detail_depth -= 1
+
+    parser = DetailParser()
+    parser.feed(
+        _render_candidates_index(
+            FakeStore(corrections=[_correction()]),
+            {"id": ["1"]},
+            rules=_rules(),
+        )
+    )
+
+    assert parser.overall_in_detail is True
+    assert parser.score_pane_in_detail is True
 
 
 def test_render_candidates_index_includes_accessible_workbench_divider():
@@ -948,7 +1004,7 @@ def test_correction_grid_has_component_columns_and_exactly_two_data_rows():
         )
     )
 
-    expected_cells = len(view["components"]) + 1
+    expected_cells = len(view["components"]) + 2
     assert parser.header_cells == expected_cells
     assert parser.body_rows == 2
     assert parser.body_cells == [expected_cells, expected_cells]
