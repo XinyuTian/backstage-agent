@@ -7,9 +7,12 @@ from .models import ActorProfile
 
 
 _ANY_GENDER_VALUES = {
+    "all",
     "all genders",
+    "any",
     "any gender",
     "any genders",
+    "open",
     "open to all genders",
     "open to any gender",
 }
@@ -75,7 +78,10 @@ def match_requirements(
 
 
 def _semantic_requirement_key(key: str, requirement: dict) -> str:
-    if key.strip().lower() == "gender":
+    normalized_key = key.strip().lower()
+    if normalized_key == "gender" or re.match(
+        r"^gender_(?:female|male|non[-_]?binary|open|any|all)$", normalized_key
+    ):
         return "gender"
     if str(requirement.get("type") or "").strip().lower() == "gender":
         return "gender"

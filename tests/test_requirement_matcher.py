@@ -258,6 +258,24 @@ def test_canonical_gender_requirement_mismatches_female_profile(actor_profile_fa
     assert matches[0].required is True
 
 
+def test_gender_prefixed_key_mismatches_female_profile(actor_profile_factory):
+    matches = match_requirements(
+        _features(
+            {
+                "gender_male": {
+                    "required": True,
+                    "evidence": "Looking for: Male, 25-35",
+                }
+            }
+        ),
+        actor_profile_factory(genders=["female"]),
+        _rules(),
+    )
+    assert matches[0].requirement_key == "gender"
+    assert matches[0].status is RequirementStatus.NOT_MET
+    assert matches[0].required is True
+
+
 def test_female_gender_requirement_matches_female_profile(actor_profile_factory):
     matches = match_requirements(
         _features({"gender": "Female"}),
@@ -281,6 +299,15 @@ def test_any_gender_requirement_matches_female_profile(actor_profile_factory):
         features, actor_profile_factory(genders=["female"]), _rules()
     )
     assert matches[0].requirement_key == "gender"
+    assert matches[0].status is RequirementStatus.MET
+
+
+def test_open_gender_requirement_matches_female_profile(actor_profile_factory):
+    matches = match_requirements(
+        _features({"gender": "Open"}),
+        actor_profile_factory(genders=["female"]),
+        _rules(),
+    )
     assert matches[0].status is RequirementStatus.MET
 
 

@@ -101,7 +101,14 @@ def test_mandatory_requirement_not_met_caps_score():
 
 
 def test_required_gender_mismatch_uses_existing_mandatory_cap(actor_profile_factory):
-    features = _features(requirements={"gender": "Male"})
+    features = _features(
+        requirements={
+            "gender_male": {
+                "required": True,
+                "evidence": "Looking for: Male, 25-35",
+            }
+        }
+    )
     rules = _rules()
     matches = match_requirements(
         features, actor_profile_factory(genders=["female"]), rules
