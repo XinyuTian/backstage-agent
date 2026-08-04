@@ -57,26 +57,89 @@ Useful settings:
 - `BACKSTAGE_BROWSER_HEADLESS`: defaults to false because Backstage may challenge headless browser sessions.
 - `BACKSTAGE_BROWSER_CHANNEL`: defaults to `chrome` when available.
 
-## Commands
+## Common Commands
+
+Run these commands from `/Users/sarahtxy/dev/backstage_agent`.
+
+### Scan, extract, and score today
+
+Fetch today's Backstage emails, extract the latest project and role data, and score candidates that do not already have scores. Existing scores are preserved.
 
 ```bash
-python3 -m backstage_agent.cli scan --limit 25 --days 1
-python3 -m backstage_agent.cli scan --limit 25 --date 2026-07-09
-python3 -m backstage_agent.cli parse-sample sample-email.html
-python3 -m backstage_agent.cli candidates --limit 25
-python3 -m backstage_agent.cli candidate-feedback 13 --human-score 45 --affected-components identity_match --failure-modes overweighted_signal --reason "Nationality over-weighted."
-python3 -m backstage_agent.cli calibration-patterns
-python3 -m backstage_agent.cli show-config
-python3 -m backstage_agent.cli ui
-python3 -m backstage_agent.cli backstage-login
-python3 -m backstage_agent.cli backstage-login-check
+.venv/bin/python -u -m backstage_agent.cli scan \
+  --date "$(date '+%Y-%m-%d')" \
+  --limit 25
 ```
 
-`parse-sample` is useful for parser tuning before connecting a real inbox.
+### Rerun today's scores only
 
-The daily `scan` command runs mutual-selection scoring automatically and preserves existing scores by default. The `score-candidates --date YYYY-MM-DD` command remains available for an explicit follow-up; add `--overwrite` only to intentionally delete and rebuild that date's scores. The `candidates` command lists ranked scores, `candidate-feedback` records a human correction, and `calibration-patterns` groups repeated taxonomy patterns into proposed scoring-rule changes.
+Delete and rebuild today's candidate scores from projects and roles already stored in SQLite. This does not fetch or extract the source emails again.
 
-The `ui` command starts the score-review workbench at `http://127.0.0.1:8765/candidates`; the root URL redirects there. Select a candidate, compare extracted evidence with agent component scores, then save or reset an optional correction for one component. Corrections update the displayed Overall, band, and color without changing the official candidate score, rank, caps, or draft suggestion.
+```bash
+.venv/bin/python -u -m backstage_agent.cli rescore-candidates \
+  --date "$(date '+%Y-%m-%d')"
+```
+
+### Rerun today's extraction and scores
+
+Fetch and extract today's source data again, then delete and rebuild today's candidate scores. The second command runs only if the scan succeeds.
+
+```bash
+.venv/bin/python -u -m backstage_agent.cli scan \
+  --date "$(date '+%Y-%m-%d')" \
+  --limit 25 &&
+.venv/bin/python -u -m backstage_agent.cli rescore-candidates \
+  --date "$(date '+%Y-%m-%d')"
+```
+
+### Open the candidate dashboard
+
+Start the local score-review dashboard at `http://127.0.0.1:8765/candidates`.
+
+```bash
+.venv/bin/python -m backstage_agent.cli ui
+```
+
+### Log in to Backstage or check the saved login
+
+Use `backstage-login` to open the persistent browser profile and log in. Use `backstage-login-check` to verify whether the saved session is still valid.
+
+```bash
+.venv/bin/python -m backstage_agent.cli backstage-login
+.venv/bin/python -m backstage_agent.cli backstage-login-check
+```
+
+### Record score feedback and inspect calibration patterns
+
+Replace the example candidate ID, score, components, failure modes, and reason with the values from your review. Then inspect repeated feedback patterns that may justify a scoring-rule change.
+
+```bash
+.venv/bin/python -m backstage_agent.cli candidate-feedback 13 \
+  --human-score 45 \
+  --affected-components identity_match \
+  --failure-modes overweighted_signal \
+  --reason "Nationality over-weighted."
+.venv/bin/python -m backstage_agent.cli calibration-patterns
+```
+
+### Turn off the daily job
+
+Stop the loaded job, if present, and keep launchd from starting it again.
+
+```bash
+launchctl bootout gui/$(id -u)/com.sarahtxy.backstage-agent.daily 2>/dev/null || true
+launchctl disable gui/$(id -u)/com.sarahtxy.backstage-agent.daily
+```
+
+### Turn on the daily job
+
+Re-enable the job and load the installed LaunchAgent plist.
+
+```bash
+launchctl enable gui/$(id -u)/com.sarahtxy.backstage-agent.daily
+launchctl bootstrap gui/$(id -u) \
+  "$HOME/Library/LaunchAgents/com.sarahtxy.backstage-agent.daily.plist"
+```
 
 ## Workflow
 
@@ -96,14 +159,7 @@ Application questions that require personal knowledge, such as swimming ability,
 
 ## Persistent Backstage Login
 
-For runs that need authenticated Backstage pages, use a dedicated local browser profile:
-
-```bash
-python3 -m backstage_agent.cli backstage-login
-python3 -m backstage_agent.cli backstage-login-check
-```
-
-The first command opens a browser using `BACKSTAGE_BROWSER_PROFILE_PATH` so you can log in once. The second command checks whether that stored session is still logged in. Set `USE_BROWSER_FOR_BACKSTAGE=true` to let scans fetch Backstage pages through that authenticated profile.
+The login command opens a browser using `BACKSTAGE_BROWSER_PROFILE_PATH` so you can log in once. The check command verifies whether that stored session is still logged in. Set `USE_BROWSER_FOR_BACKSTAGE=true` to let scans fetch Backstage pages through that authenticated profile. Both commands are listed under [Common Commands](#common-commands).
 
 If Backstage or Cloudflare blocks the automated browser, the agent should stop and report that status instead of trying to bypass the block.
 
@@ -111,13 +167,7 @@ If Backstage or Cloudflare blocks the automated browser, the agent should stop a
 
 The daily local run is defined in `scripts/daily_scan.sh` and scheduled by `launchd/com.sarahtxy.backstage-agent.daily.plist`. launchd runs the script at **9:00, 10:00, 11:00, and 12:00** local time.
 
-The script runs the scoring-first daily workflow. It invokes:
-
-```bash
-python3 -m backstage_agent.cli scan --days 1 --limit 25
-```
-
-The scan command no longer passes `--notify`; the shell sends macOS notifications after inspecting the JSON result.
+The script runs the scoring-first daily workflow with a one-day scan and a limit of 25 emails. The shell sends macOS notifications after inspecting the JSON result.
 
 Retry behavior:
 
@@ -127,42 +177,7 @@ Retry behavior:
 
 State is tracked in `logs/daily-scan-state.json`. Logs go to `logs/daily-scan.out.log` and `logs/daily-scan.err.log`.
 
-After changing the launchd plist, reload the job:
-
-```bash
-launchctl bootout gui/$(id -u)/com.sarahtxy.backstage-agent.daily 2>/dev/null || true
-launchctl bootstrap gui/$(id -u) "$PWD/launchd/com.sarahtxy.backstage-agent.daily.plist"
-```
-
-The scheduled command refreshes and scores candidates automatically.
-
-Run candidate scoring manually for an exact date:
-
-```bash
-# Preserve existing scores and score only missing candidates.
-.venv/bin/python -m backstage_agent.cli score-candidates --date 2026-07-15
-
-# Delete and rebuild existing scores for that date.
-.venv/bin/python -m backstage_agent.cli score-candidates --date 2026-07-15 --overwrite
-```
-
-The older `rescore-candidates --date YYYY-MM-DD` command remains an overwrite-mode compatibility alias.
-
-To rerun the daily job from scratch and overwrite the active SQLite database, first move the current database into `backups/`. The next scan will recreate `backstage_agent.sqlite3` and ignore prior saved candidates:
-
-```bash
-cd /Users/sarahtxy/dev/backstage_agent
-mkdir -p backups
-ts=$(date '+%Y%m%d-%H%M%S')
-mv backstage_agent.sqlite3 "backups/backstage_agent.sqlite3.${ts}.bak"
-.venv/bin/python -m backstage_agent.cli scan --days 1 --limit 25 --notify
-```
-
-For an exact calendar date instead of the rolling one-day window, replace the last command with:
-
-```bash
-.venv/bin/python -m backstage_agent.cli scan --date "$(date '+%Y-%m-%d')" --limit 25 --notify
-```
+The scheduled command refreshes and scores candidates automatically. Use the on/off commands under [Common Commands](#common-commands) to control the schedule.
 
 ## Testing
 

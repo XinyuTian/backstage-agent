@@ -4,6 +4,7 @@ __pycache__/
 *.sqlite3
 *.sqlite3.*
 .agents/
+.codex-doc-read-*/
 .cursor/
 .env
 .pytest_cache/
