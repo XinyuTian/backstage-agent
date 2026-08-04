@@ -227,3 +227,72 @@ def test_language_requirement_checks_profile_skills(actor_profile_factory):
     matches = match_requirements(features, profile, _rules())
 
     assert matches[0].status is RequirementStatus.MET
+
+
+def test_numbered_gender_requirement_mismatches_female_profile(actor_profile_factory):
+    features = _features(
+        {
+            "requirement_1": {
+                "requirement": "Gender: Male",
+                "evidence": "Kenny - Supporting, Male, 20-40",
+            }
+        }
+    )
+    matches = match_requirements(
+        features, actor_profile_factory(genders=["female"]), _rules()
+    )
+    assert matches[0].requirement_key == "gender"
+    assert matches[0].status is RequirementStatus.NOT_MET
+    assert matches[0].required is True
+    assert matches[0].local_value == "female"
+
+
+def test_canonical_gender_requirement_mismatches_female_profile(actor_profile_factory):
+    matches = match_requirements(
+        _features({"gender": "Male"}),
+        actor_profile_factory(genders=["female"]),
+        _rules(),
+    )
+    assert matches[0].requirement_key == "gender"
+    assert matches[0].status is RequirementStatus.NOT_MET
+    assert matches[0].required is True
+
+
+def test_female_gender_requirement_matches_female_profile(actor_profile_factory):
+    matches = match_requirements(
+        _features({"gender": "Female"}),
+        actor_profile_factory(genders=["female"]),
+        _rules(),
+    )
+    assert matches[0].status is RequirementStatus.MET
+
+
+def test_any_gender_requirement_matches_female_profile(actor_profile_factory):
+    features = _features(
+        {
+            "requirement_1": {
+                "type": "gender",
+                "value": "Any gender",
+                "evidence": "Open to any gender.",
+            }
+        }
+    )
+    matches = match_requirements(
+        features, actor_profile_factory(genders=["female"]), _rules()
+    )
+    assert matches[0].requirement_key == "gender"
+    assert matches[0].status is RequirementStatus.MET
+
+
+def test_unrelated_numbered_requirement_remains_unknown(actor_profile_factory):
+    features = _features(
+        {
+            "requirement_1": {
+                "requirement": "Natural screen presence",
+                "evidence": "Natural, authentic screen presence.",
+            }
+        }
+    )
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+    assert matches[0].requirement_key == "requirement_1"
+    assert matches[0].status is RequirementStatus.UNKNOWN_NEEDS_USER_INPUT

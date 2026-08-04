@@ -1,7 +1,18 @@
 from __future__ import annotations
 
+import re
+
 from .candidate_models import CandidateFeatures, RequirementMatch, RequirementStatus
 from .models import ActorProfile
+
+
+_ANY_GENDER_VALUES = {
+    "all genders",
+    "any gender",
+    "any genders",
+    "open to all genders",
+    "open to any gender",
+}
 
 
 def match_requirements(
@@ -15,9 +26,25 @@ def match_requirements(
         if _requirement_is_empty(raw_requirement):
             continue
         requirement = _requirement_dict(raw_requirement)
+        semantic_key = _semantic_requirement_key(key, requirement)
+        if semantic_key == "gender":
+            status, local_value = _evaluate_gender_requirement(profile, requirement)
+            evidence = str(requirement.get("evidence") or "")
+            matches.append(
+                RequirementMatch(
+                    requirement_key="gender",
+                    status=status,
+                    required=True,
+                    local_value=local_value,
+                    evidence=evidence or _gender_requirement_text(requirement),
+                    reason=_reason_for_status(status),
+                    score_impact=0,
+                )
+            )
+            continue
         required = bool(requirement.get("required"))
         evidence = str(requirement.get("evidence") or "")
-        rule = known.get(key)
+        rule = known.get(semantic_key)
         if not rule:
             matches.append(
                 RequirementMatch(
@@ -45,6 +72,58 @@ def match_requirements(
             )
         )
     return matches
+
+
+def _semantic_requirement_key(key: str, requirement: dict) -> str:
+    if key.strip().lower() == "gender":
+        return "gender"
+    if str(requirement.get("type") or "").strip().lower() == "gender":
+        return "gender"
+    label = str(requirement.get("requirement") or "").strip().lower()
+    return "gender" if re.match(r"^gender\s*:", label) else key
+
+
+def _gender_requirement_text(requirement: dict) -> str:
+    for field in ("value", "requirement", "evidence"):
+        value = str(requirement.get(field) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_gender_values(value: str) -> set[str]:
+    normalized = re.sub(r"\s+", " ", value.strip().lower())
+    if normalized in _ANY_GENDER_VALUES:
+        return {"any"}
+    if normalized.startswith("gender:"):
+        normalized = normalized.split(":", 1)[1].strip()
+    values = set()
+    if re.search(r"\bfemale\b|\bwoman\b|\bwomen\b", normalized):
+        values.add("female")
+    without_female = re.sub(r"\bfemale\b", "", normalized)
+    if re.search(r"\bmale\b|\bman\b|\bmen\b", without_female):
+        values.add("male")
+    if re.search(r"\bnon[- ]?binary\b", normalized):
+        values.add("nonbinary")
+    return values
+
+
+def _evaluate_gender_requirement(
+    profile: ActorProfile, requirement: dict
+) -> tuple[RequirementStatus, str]:
+    local = {
+        value
+        for gender in profile.genders
+        for value in _normalize_gender_values(str(gender))
+    }
+    local_text = ", ".join(str(gender) for gender in profile.genders)
+    required = _normalize_gender_values(_gender_requirement_text(requirement))
+    if "any" in required:
+        return RequirementStatus.MET, local_text
+    if not required or not local:
+        return RequirementStatus.UNKNOWN_NEEDS_USER_INPUT, local_text
+    status = RequirementStatus.MET if required & local else RequirementStatus.NOT_MET
+    return status, local_text
 
 
 def _requirement_is_empty(value: object) -> bool:
