@@ -8,6 +8,7 @@ __pycache__/
 .env
 .pytest_cache/
 .superpowers/
+.worktrees/
 .DS_Store
 logs/
 browser_profiles/
