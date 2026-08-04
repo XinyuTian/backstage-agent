@@ -125,6 +125,94 @@ def test_unknown_string_requirement_needs_user_input(actor_profile_factory):
     assert matches[0].status is RequirementStatus.UNKNOWN_NEEDS_USER_INPUT
 
 
+def test_empty_requirements_are_ignored(actor_profile_factory):
+    features = _features(
+        {
+            "null_value": None,
+            "empty_text": "   ",
+            "empty_list": [],
+            "empty_object": {},
+            "empty_wrapper": {"required": True, "evidence": None},
+            "real_requirement": {
+                "required": True,
+                "evidence": "Must juggle fire.",
+            },
+        }
+    )
+
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+
+    assert [match.requirement_key for match in matches] == ["real_requirement"]
+
+
+def test_not_specified_placeholder_wrappers_are_ignored(actor_profile_factory):
+    features = _features(
+        {
+            "requirement_1": {
+                "type": "age_range",
+                "value": "20-30",
+                "evidence": "Day Player, 20-30",
+            },
+            "requirement_2": {
+                "type": "gender",
+                "value": "not specified",
+                "evidence": None,
+            },
+            "requirement_3": {
+                "type": "ethnicity",
+                "value": "NoT SpEcIfIeD",
+                "evidence": "",
+            },
+            "requirement_4": {
+                "type": "location",
+                "value": "Antioch, CA",
+                "evidence": "Shooting locations: Antioch, CA",
+            },
+            "requirement_5": {
+                "type": "special_instruction",
+                "value": "not specified",
+                "evidence": "Applicant must confirm this requirement directly.",
+            },
+        }
+    )
+
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+
+    assert [match.requirement_key for match in matches] == [
+        "requirement_1",
+        "requirement_4",
+        "requirement_5",
+    ]
+
+
+def test_not_specified_wrappers_with_other_substantive_fields_are_retained(
+    actor_profile_factory,
+):
+    features = _features(
+        {
+            "union_constraint": {
+                "type": "union_status",
+                "value": "not specified",
+                "evidence": None,
+                "constraint": "Must be SAG-AFTRA",
+            },
+            "capped_requirement": {
+                "type": "special_instruction",
+                "value": "NOT SPECIFIED",
+                "evidence": "",
+                "score_cap": 50,
+            },
+        }
+    )
+
+    matches = match_requirements(features, actor_profile_factory(), _rules())
+
+    assert [match.requirement_key for match in matches] == [
+        "union_constraint",
+        "capped_requirement",
+    ]
+
+
 def test_language_requirement_checks_profile_skills(actor_profile_factory):
     profile = actor_profile_factory(skills=["Mandarin", "Improvisation"])
     features = _features(

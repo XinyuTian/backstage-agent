@@ -12,6 +12,8 @@ def match_requirements(
     known = rules.get("known_requirements", {})
     matches: list[RequirementMatch] = []
     for key, raw_requirement in features.requirements.items():
+        if _requirement_is_empty(raw_requirement):
+            continue
         requirement = _requirement_dict(raw_requirement)
         required = bool(requirement.get("required"))
         evidence = str(requirement.get("evidence") or "")
@@ -43,6 +45,42 @@ def match_requirements(
             )
         )
     return matches
+
+
+def _requirement_is_empty(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple)):
+        return not value or all(_requirement_is_empty(item) for item in value)
+    if isinstance(value, dict):
+        substantive_value = value.get("value")
+        if (
+            isinstance(substantive_value, str)
+            and substantive_value.strip().lower() == "not specified"
+            and _requirement_is_empty(value.get("evidence"))
+        ):
+            other_substantive_values = [
+                item
+                for key, item in value.items()
+                if key not in {"required", "optional", "type", "value", "evidence"}
+            ]
+            return all(
+                _requirement_is_empty(item)
+                or (
+                    isinstance(item, str)
+                    and item.strip().lower() == "not specified"
+                )
+                for item in other_substantive_values
+            )
+        meaningful = [
+            item
+            for key, item in value.items()
+            if key not in {"required", "optional"}
+        ]
+        return not meaningful or all(_requirement_is_empty(item) for item in meaningful)
+    return False
 
 
 def _requirement_dict(value: object) -> dict:
