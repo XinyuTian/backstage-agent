@@ -3,8 +3,11 @@ __pycache__/
 *.py[cod]
 *.sqlite3
 *.sqlite3.*
+.agents/
+.cursor/
 .env
 .pytest_cache/
+.superpowers/
 .DS_Store
 logs/
 browser_profiles/
