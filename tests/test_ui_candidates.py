@@ -136,6 +136,66 @@ def test_flatten_requirements_uses_semantic_keys_and_omits_technical_fields():
     ]
 
 
+def test_flatten_requirements_labels_inferred_and_ambiguous_certainty():
+    requirements = {
+        "gender": {
+            "value": "Male",
+            "required": False,
+            "evidence": "Masculine presentation preferred.",
+            "certainty": "inferred",
+        },
+        "requirement_1": {
+            "requirement": "Young-looking",
+            "required": False,
+            "evidence": "Young-looking male lead",
+            "certainty": "ambiguous",
+        },
+    }
+
+    flattened = _flatten_requirements(requirements)
+
+    assert flattened == [
+        {
+            "description": "Gender",
+            "importance": "inferred",
+            "evidence": "Masculine presentation preferred.",
+        },
+        {
+            "description": "Young-looking",
+            "importance": "ambiguous",
+            "evidence": "Young-looking male lead",
+        },
+    ]
+
+
+def test_readable_requirements_render_certainty_labels_and_evidence():
+    html = _render_readable_evidence(
+        {
+            "features": {
+                "requirements": {
+                    "gender": {
+                        "value": "Male",
+                        "required": False,
+                        "evidence": "Masculine presentation preferred.",
+                        "certainty": "inferred",
+                    },
+                    "requirement_1": {
+                        "requirement": "Young-looking",
+                        "required": False,
+                        "evidence": "Young-looking male lead",
+                        "certainty": "ambiguous",
+                    },
+                }
+            }
+        }
+    )
+
+    assert "Inferred" in html
+    assert "Ambiguous" in html
+    assert "Masculine presentation preferred." in html
+    assert "Young-looking male lead" in html
+
+
 def test_scalar_requirement_map_preserves_semantic_context_in_rendered_bullets():
     requirements = {
         "age_range": "60-70",

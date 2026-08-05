@@ -36,6 +36,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Fixed
 
+- Canonicalized explicit gender and numeric age facts from loose numbered candidate requirements, kept inferred requirements visible but score-neutral, and preserved the existing mandatory-mismatch cap without filtering candidates.
 - Fixed incompatible casting-gender requirements so canonical and numbered extraction shapes use stored profile genders and receive the existing mandatory-mismatch cap instead of unknown-requirement partial credit.
 - Prevented empty extracted requirements from being treated as mandatory mismatches or triggering candidate score caps.
 - Styled all candidate date-navigation controls like the filled green Filter button and replaced icon arrows with compact `<` and `>` labels.

@@ -829,16 +829,24 @@ def _flatten_requirements(value: object) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             return
 
-        description = _clean_text(item.get("description"))
+        description = _clean_text(
+            item.get("description") or item.get("requirement")
+        )
+        value = _clean_text(item.get("value"))
         importance = _clean_text(item.get("importance"))
         evidence = _clean_text(item.get("evidence"))
+        certainty = _clean_text(item.get("certainty")).lower()
+        if certainty in {"inferred", "ambiguous"}:
+            importance = certainty
         if (
             not description
             and semantic_key
             and not _is_numbered_requirement_key(semantic_key)
-            and (importance or evidence)
+            and (importance or evidence or value)
         ):
             description = _humanize(semantic_key)
+        if not evidence and value:
+            evidence = value
         if description or importance or evidence:
             if description and evidence and description.casefold() == evidence.casefold():
                 evidence = ""
