@@ -8,11 +8,12 @@ from typing import Any
 
 from .agent import BackstageAgent
 from .browser_session import BrowserSessionError, check_backstage_login, open_backstage_login
-from .calibration import build_calibration_proposals, merge_calibration_patterns
+from .calibration import build_bootstrap_proposals, evaluate_calibration_evidence
 from .candidate_models import HumanFeedback
 from .models import EmailMessage
 from .notifier import send_mac_notification
 from .parser import parse_casting_notices
+from .scoring import load_scoring_rules
 from .settings import load_actor_profile, load_settings
 from .storage import DecisionStore
 
@@ -95,7 +96,7 @@ def main() -> None:
             raise SystemExit(str(exc)) from exc
         print(json.dumps({"feedback_id": feedback_id}, indent=2))
     elif args.command == "calibration-patterns":
-        _calibration_patterns()
+        print(_calibration_patterns())
     elif args.command == "rescore-candidates":
         settings = load_settings()
         print(_rescore_candidates_for_date(args.date, settings=settings))
@@ -210,31 +211,60 @@ def _record_feedback_from_args(store: DecisionStore, args: Any) -> int:
     return store.record_candidate_feedback(feedback)
 
 
-def _calibration_patterns() -> None:
-    settings = load_settings()
-    store = DecisionStore(settings.database_path)
-    patterns = merge_calibration_patterns(
-        [store.feedback_patterns(), store.correction_patterns()]
+def _calibration_patterns(
+    store=None,
+    rules=None,
+    calibration_date: date | None = None,
+) -> str:
+    if store is None:
+        settings = load_settings()
+        store = DecisionStore(settings.database_path)
+    rules = rules or load_scoring_rules()
+    calibration_date = calibration_date or date.today()
+    current_version = str(rules["version"])
+    rows = store.active_calibration_evidence()
+    evaluated, excluded = evaluate_calibration_evidence(
+        rows,
+        current_version,
+        calibration_date,
     )
-    proposals = build_calibration_proposals(patterns)
-    for proposal in proposals:
-        store.record_calibration_proposal(proposal)
-    print(
-        json.dumps(
-            [
-                {
-                    "pattern_key": proposal.pattern_key,
-                    "example_count": proposal.example_count,
-                    "average_delta": proposal.average_delta,
-                    "affected_component": proposal.affected_component,
-                    "failure_mode": proposal.failure_mode,
-                    "proposal_text": proposal.proposal_text,
-                    "status": proposal.status,
-                }
-                for proposal in proposals
-            ],
-            indent=2,
+    proposals, proposal_exclusions = build_bootstrap_proposals(
+        evaluated,
+        scoring_version=current_version,
+    )
+    output = []
+    for proposal, supporting_evidence in proposals:
+        proposal_id, created = store.record_calibration_proposal_idempotent(
+            proposal,
+            supporting_evidence,
         )
+        output.append(
+            {
+                "proposal_id": proposal_id,
+                "pattern_key": proposal.pattern_key,
+                "active_role_count": proposal.example_count,
+                "effective_evidence_weight": proposal.effective_weight,
+                "maturity_stage": proposal.maturity_stage,
+                "proposed_adjustment": proposal.proposed_adjustment,
+                "average_residual": proposal.average_delta,
+                "created": created,
+                "status": proposal.status,
+            }
+        )
+    return json.dumps(
+        {
+            "scoring_version": current_version,
+            "calibration_date": calibration_date.isoformat(),
+            "active_evidence_count": len(rows),
+            "excluded_evidence": [*excluded, *proposal_exclusions],
+            "proposals": output,
+            "message": (
+                "No new calibration proposal was needed."
+                if output and not any(item["created"] for item in output)
+                else "Calibration proposals evaluated."
+            ),
+        },
+        indent=2,
     )
 
 

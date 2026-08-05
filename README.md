@@ -111,7 +111,7 @@ Use `backstage-login` to open the persistent browser profile and log in. Use `ba
 
 ### Record score feedback and inspect calibration patterns
 
-Replace the example candidate ID, score, components, failure modes, and reason with the values from your review. Then inspect repeated feedback patterns that may justify a scoring-rule change.
+Replace the example candidate ID, score, components, failure modes, and reason with the values from your review. Then inspect feedback residuals that may justify a scoring-rule change. For each role and component, only the latest feedback remains active; superseded feedback stays in SQLite as audit history.
 
 ```bash
 .venv/bin/python -m backstage_agent.cli candidate-feedback 13 \
@@ -121,6 +121,8 @@ Replace the example candidate ID, score, components, failure modes, and reason w
   --reason "Nationality over-weighted."
 .venv/bin/python -m backstage_agent.cli calibration-patterns
 ```
+
+Bootstrap calibration is intentionally aggressive and can propose adjustments up to plus or minus five points, but it never rewrites `scoring_rules.json` automatically. Active evidence is rescored against the current scoring version before calibration. Historical evidence receives age weights of `1.00` for 0–30 days, `0.70` for 31–90 days, `0.40` for 91–180 days, and `0.20` after 180 days. Once a component has five active labels from the last 30 days, evidence older than 90 days remains visible for stability review but receives zero proposal weight. Repeating the command with the same scoring version, residuals, and weights returns the existing proposal instead of inserting a duplicate.
 
 ### Turn off the daily job
 

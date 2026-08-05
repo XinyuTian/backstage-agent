@@ -65,11 +65,11 @@ Calibration begins aggressively because the initial scoring rules are expected t
 
 | Stage | Active distinct candidates for metric | Maximum proposed adjustment | Review policy |
 |---|---:|---:|---|
-| Bootstrap | 1-5 | plus or minus 5 points | Manual approval required |
+| Bootstrap | Current stage; any active evidence volume | plus or minus 5 points | Manual approval required |
 | Learning | 6-15 | plus or minus 3 points | Manual approval and directional-consistency check |
 | Mature | 16 or more | plus or minus 2 points | Manual approval, stronger consistency check, and outlier-resistant summary |
 
-The evidence count and maturity stage are component-specific. A mature `role_value` component does not force a newly reviewed `identity_match` component out of bootstrap mode.
+The initial implementation remains in bootstrap mode for any evidence count so that early scoring rules can change aggressively and historical decay is immediately useful. When the future lifecycle transition is enabled, evidence count and maturity stage are component-specific: a mature `role_value` component does not force a newly reviewed `identity_match` component out of bootstrap mode.
 
 The initial implementation delivers the bootstrap stage only. Learning and mature behavior remain documented as planned work rather than being approximated with unreviewed heuristics.
 

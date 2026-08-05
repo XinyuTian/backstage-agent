@@ -543,18 +543,21 @@ def test_existing_feedback_is_backfilled_with_latest_active(
     )
     with store._connect() as conn:
         conn.execute("DELETE FROM candidate_calibration_evidence")
-        for human_score in (50, 70):
+        for human_score, created_at in (
+            (50, "2026-01-01 00:00:00"),
+            (70, "2026-02-01 00:00:00"),
+        ):
             conn.execute(
                 """
                 INSERT INTO candidate_feedback (
-                  candidate_id, agent_score, human_score, score_delta,
+                  created_at, candidate_id, agent_score, human_score, score_delta,
                   affected_components_json, failure_modes_json,
                   free_text_reason, calibration_status
-                ) VALUES (?, 80, ?, ?, '["role_value"]',
+                ) VALUES (?, ?, 80, ?, ?, '["role_value"]',
                           '["overweighted_signal"]', 'Legacy',
                           'unreviewed_for_calibration')
                 """,
-                (candidate_id, human_score, human_score - 80),
+                (created_at, candidate_id, human_score, human_score - 80),
             )
 
     migrated = DecisionStore(database_path)
@@ -565,6 +568,10 @@ def test_existing_feedback_is_backfilled_with_latest_active(
     assert [row["human_target"] for row in history] == [70, 50]
     assert history[0]["superseded_at"] is None
     assert history[1]["superseded_at"] is not None
+    assert [row["created_at"] for row in history] == [
+        "2026-02-01 00:00:00",
+        "2026-01-01 00:00:00",
+    ]
 
 
 def test_feedback_patterns_expand_all_taxonomy_pairs(tmp_path, casting_notice_factory):

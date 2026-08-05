@@ -495,6 +495,12 @@ class DecisionStore:
                 ),
             )
             feedback_id = int(cursor.lastrowid)
+            feedback_created_at = str(
+                conn.execute(
+                    "SELECT created_at FROM candidate_feedback WHERE id = ?",
+                    (feedback_id,),
+                ).fetchone()[0]
+            )
             candidate = conn.execute(
                 """
                 SELECT candidate_type, project_key, COALESCE(role_key, '') AS role_key,
@@ -529,6 +535,7 @@ class DecisionStore:
                         submitted_agent_score=feedback.agent_score,
                         scoring_version=str(candidate[3]),
                     ),
+                    created_at=feedback_created_at,
                 )
             return feedback_id
 
@@ -628,7 +635,7 @@ class DecisionStore:
             )
             row = conn.execute(
                 """
-                SELECT id, revision
+                SELECT id, revision, updated_at
                 FROM candidate_score_corrections
                 WHERE candidate_type = ? AND project_key = ?
                   AND role_key = ? AND component_name = ?
@@ -658,6 +665,7 @@ class DecisionStore:
                     submitted_agent_score=correction.agent_component_score,
                     scoring_version=correction.scoring_version,
                 ),
+                created_at=str(row[2]),
             )
             return correction_id
 
@@ -1186,6 +1194,7 @@ class DecisionStore:
 def _record_calibration_evidence(
     conn: sqlite3.Connection,
     evidence: CalibrationEvidence,
+    created_at: str | None = None,
 ) -> int:
     role_key = evidence.role_key or ""
     existing = conn.execute(
@@ -1215,13 +1224,14 @@ def _record_calibration_evidence(
     cursor = conn.execute(
         """
         INSERT INTO candidate_calibration_evidence (
-          source_type, source_id, candidate_type, project_key, role_key,
+          created_at, source_type, source_id, candidate_type, project_key, role_key,
           candidate_id_at_submission, component_name, failure_mode,
           target_kind, human_target, submitted_agent_score, scoring_version
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (COALESCE(?, CURRENT_TIMESTAMP), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            created_at,
             evidence.source_type,
             evidence.source_id,
             evidence.candidate_type,
@@ -1275,6 +1285,7 @@ def _backfill_calibration_evidence(conn: sqlite3.Connection) -> None:
                     submitted_agent_score=int(row["agent_score"]),
                     scoring_version=str(row["scoring_version"]),
                 ),
+                created_at=str(row["created_at"]),
             )
 
     correction_rows = conn.execute(
@@ -1297,6 +1308,7 @@ def _backfill_calibration_evidence(conn: sqlite3.Connection) -> None:
                 submitted_agent_score=int(row["agent_component_score"]),
                 scoring_version=str(row["scoring_version"]),
             ),
+            created_at=str(row["updated_at"]),
         )
 
 
