@@ -11,6 +11,25 @@ from .settings import Settings
 
 
 DISALLOWED_SCORE_FIELDS = {"overall_score", "score_band", "should_apply", "draft_suggestion"}
+_NUMBERED_REQUIREMENT_RE = re.compile(r"^requirement_\d+$")
+_AGE_RANGE_RE = re.compile(r"(?<!\d)(\d{1,2})\s*[-–—]\s*(\d{1,2})(?!\d)")
+_GENDER_PATTERNS = (
+    ("Nonbinary", re.compile(r"\bnon[- ]?binary\b", re.IGNORECASE)),
+    ("Female", re.compile(r"\b(?:female|woman|women)\b", re.IGNORECASE)),
+    ("Male", re.compile(r"\b(?:male|man|men)\b", re.IGNORECASE)),
+)
+_CANONICAL_REQUIREMENT_KEYS = {
+    "gender",
+    "age_range",
+    "ethnicity",
+    "union_status",
+    "location",
+    "language",
+    "skills",
+    "availability",
+    "work_authorization",
+}
+_OPTIONAL_LANGUAGE_RE = re.compile(r"\b(?:preferred|ideally|a plus)\b", re.IGNORECASE)
 
 
 def _llm_client(settings: Settings) -> OpenAI | None:
@@ -99,9 +118,9 @@ def _remove_score_fields(data: dict) -> tuple[dict, bool]:
 
 def _normalize_requirements(value: object) -> dict:
     if isinstance(value, dict):
-        return value
-    if isinstance(value, list):
-        normalized = {}
+        requirement_map = dict(value)
+    elif isinstance(value, list):
+        requirement_map = {}
         for index, item in enumerate(value, start=1):
             if isinstance(item, dict):
                 key = str(
@@ -111,14 +130,116 @@ def _normalize_requirements(value: object) -> dict:
                     or item.get("label")
                     or f"requirement_{index}"
                 )
-                normalized[_requirement_key(key)] = dict(item)
+                requirement_map[_requirement_key(key)] = dict(item)
             elif isinstance(item, str) and item.strip():
-                normalized[_requirement_key(item)] = {
+                requirement_map[_requirement_key(item)] = {
                     "required": True,
                     "evidence": item.strip(),
                 }
-        return normalized
-    return value  # type: ignore[return-value]
+    else:
+        return value  # type: ignore[return-value]
+    return _normalize_requirement_map(requirement_map)
+
+
+def _normalize_requirement_map(value: dict[str, object]) -> dict[str, dict]:
+    normalized: dict[str, dict] = {}
+    for raw_key, raw_value in value.items():
+        key = _requirement_key(str(raw_key))
+        entry = _normalize_requirement_entry(raw_value)
+        if _NUMBERED_REQUIREMENT_RE.match(key):
+            for semantic_key, semantic_entry in _split_numbered_requirement(
+                key, entry
+            ).items():
+                if semantic_key not in normalized:
+                    normalized[semantic_key] = semantic_entry
+            continue
+        if key in _CANONICAL_REQUIREMENT_KEYS or key.startswith(
+            ("language_", "skill_")
+        ):
+            entry.setdefault("required", True)
+            entry.setdefault("certainty", "explicit")
+        normalized[key] = entry
+    return normalized
+
+
+def _normalize_requirement_entry(value: object) -> dict:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        return {"value": value.strip(), "required": True, "evidence": value.strip()}
+    if isinstance(value, list):
+        evidence = "; ".join(str(item) for item in value if str(item).strip())
+        return {"value": evidence, "required": True, "evidence": evidence}
+    return {"value": str(value), "required": True, "evidence": str(value)}
+
+
+def _split_numbered_requirement(key: str, entry: dict) -> dict[str, dict]:
+    text = _requirement_text(entry)
+    evidence = _requirement_evidence(entry) or text
+    required_was_explicit = "required" in entry
+    required = bool(entry.get("required")) if required_was_explicit else True
+    if _OPTIONAL_LANGUAGE_RE.search(text):
+        required = False
+
+    split: dict[str, dict] = {}
+    residual = text
+    for gender, pattern in _GENDER_PATTERNS:
+        match = pattern.search(residual)
+        if not match:
+            continue
+        split["gender"] = {
+            "value": gender,
+            "required": required,
+            "evidence": evidence,
+            "certainty": "explicit",
+        }
+        residual = pattern.sub(" ", residual)
+        break
+
+    age_match = _AGE_RANGE_RE.search(residual)
+    if age_match:
+        split["age_range"] = {
+            "value": f"{age_match.group(1)}-{age_match.group(2)}",
+            "required": required,
+            "evidence": evidence,
+            "certainty": "explicit",
+        }
+        residual = _AGE_RANGE_RE.sub(" ", residual)
+
+    residual = re.sub(r"\s*[,;/|]+\s*", " ", residual)
+    residual = re.sub(r"\s+", " ", residual).strip(" -–—")
+    if residual:
+        retained = dict(entry)
+        if "value" in retained and "requirement" not in retained:
+            retained["value"] = residual
+        else:
+            retained["requirement"] = residual
+        retained["required"] = (
+            bool(entry.get("required")) if required_was_explicit else False
+        )
+        retained["certainty"] = "ambiguous"
+        split[key] = retained
+    elif not split:
+        retained = dict(entry)
+        retained["required"] = (
+            bool(entry.get("required")) if required_was_explicit else False
+        )
+        retained["certainty"] = "ambiguous"
+        split[key] = retained
+    return split
+
+
+def _requirement_text(entry: dict) -> str:
+    for field in ("value", "requirement"):
+        value = entry.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return _requirement_evidence(entry)
+
+
+def _requirement_evidence(entry: dict) -> str:
+    value = entry.get("evidence")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _requirement_key(value: str) -> str:
@@ -239,6 +360,12 @@ _FEATURE_EXTRACTION_PROMPT = (
     "Extract structured casting candidate features as JSON. Do not score, rank, "
     "recommend applying, or decide whether the actor should apply. Return only "
     "role_type, project_type, requirements, project_signals, compensation, "
-    "uncertainty, and evidence_snippets. Every important extracted requirement "
-    "must include evidence from the notice."
+    "uncertainty, and evidence_snippets. Use canonical requirement keys gender, "
+    "age_range, ethnicity, union_status, location, language, skills, availability, "
+    "and work_authorization whenever the source states them clearly. Each "
+    "requirement must contain value, required, evidence, and certainty; certainty "
+    "must be explicit, inferred, or ambiguous. Use required=false for preferred, "
+    "ideally, or a-plus language. Never convert qualitative age language into a "
+    "numeric range. Keep unclear requirements generic rather than guessing. Every "
+    "important extracted requirement must include evidence from the notice."
 )
