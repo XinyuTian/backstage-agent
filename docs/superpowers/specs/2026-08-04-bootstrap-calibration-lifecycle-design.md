@@ -31,11 +31,28 @@ Historical active labels remain reusable. They are not permanently consumed or d
 
 Before proposing another adjustment, the system evaluates each active label against the current scoring-rule version. Its calibration signal is the residual between the human target and the score produced by the current rules. When an earlier rule adjustment already corrected an example, that example's residual approaches zero and no longer pushes the metric in the same direction.
 
+### Historical Weight Decay
+
+Active evidence from different candidates does not remain equally influential forever. After residual recomputation, calibration multiplies each residual by an auditable age weight based on the evidence submission time:
+
+| Evidence age at calibration | Weight |
+|---|---:|
+| 0-30 days | 1.00 |
+| 31-90 days | 0.70 |
+| 91-180 days | 0.40 |
+| More than 180 days | 0.20 |
+
+Superseded evidence for the same candidate/component has weight zero. When a component has at least five active labels submitted within the last 30 days, active evidence older than 90 days becomes stability-only evidence: it remains visible in the calibration report but has weight zero in the proposed adjustment. This lets sufficiently dense new information replace stale market or role patterns quickly without erasing history.
+
+The proposed adjustment uses the weighted mean residual, `sum(residual * weight) / sum(weight)`, rounded to the nearest integer and then bounded by the maturity-stage adjustment cap. Raw distinct-candidate count continues to determine maturity; both raw count and effective weight sum are reported. The calibration run date and each applied weight are stored with proposal evidence so results are reproducible.
+
 Every calibration run records:
 
 - the scoring-rule version evaluated;
 - the active feedback records supporting the proposal;
 - the residual summary;
+- the calibration date, evidence age, and applied historical weight;
+- the raw evidence count and effective weight sum;
 - the evidence count based on distinct candidate identities;
 - the calibration maturity stage;
 - the proposed adjustment and its review status.
@@ -94,17 +111,19 @@ The existing human-readable statuses `proposed`, `accepted`, and `rejected` rema
 3. Resolve the current scoring-rule version.
 4. Recompute, or derive through the production scoring path, the current component result for each labeled candidate.
 5. Calculate each residual from the human target and current component result.
-6. Determine maturity from the number of distinct active candidates for the component.
-7. Generate a bounded proposal using the stage policy.
-8. Record the proposal and its exact evidence set idempotently.
-9. Require manual review before modifying `scoring_rules.json`.
-10. After an accepted rule change, rescore the same active evidence under the new version before any later proposal is generated.
+6. Apply the age-based weight and the recent-evidence stability-only rule.
+7. Determine maturity from the raw number of distinct active candidates for the component.
+8. Generate a bounded proposal from the weighted mean residual using the stage policy.
+9. Record the proposal, calibration date, weights, and exact evidence set idempotently.
+10. Require manual review before modifying `scoring_rules.json`.
+11. After an accepted rule change, rescore the same active evidence under the new version before any later proposal is generated.
 
 ## Safety and Error Handling
 
 - Feedback tied to candidates that cannot be reconstructed under the current scoring contract remains historical but is excluded with an explicit reason.
 - Stale scoring snapshots must not be silently compared with current rules.
 - A repeated command with no changed evidence or scoring version must report that no new proposal is needed.
+- A different calendar date alone must not create a duplicate proposal unless at least one evidence item crosses a defined age boundary and therefore changes the weighted calculation.
 - A new feedback submission for an existing role/component replaces the active label even if an older proposal referenced the previous submission.
 - Calibration must not mutate production scoring rules automatically.
 - Database migrations must preserve all existing candidate feedback and component corrections.
@@ -114,6 +133,7 @@ The existing human-readable statuses `proposed`, `accepted`, and `rejected` rema
 The `calibration-patterns` command remains the manual trigger. Its output should distinguish:
 
 - active evidence count;
+- effective evidence weight and stability-only count;
 - excluded or superseded evidence count;
 - maturity stage;
 - current residual;
@@ -137,6 +157,9 @@ Calibration tests must prove that:
 
 - bootstrap evidence permits an adjustment bounded at five points;
 - residuals are calculated against current rules;
+- evidence receives weights of 1.00, 0.70, 0.40, or 0.20 at the specified age boundaries;
+- evidence older than 90 days receives zero proposal weight when at least five recent labels exist;
+- weighted residuals, rather than unweighted averages, determine the proposal;
 - an accepted earlier adjustment reduces later residual pressure;
 - evidence counts use distinct stable candidate identities;
 - missing or incompatible scoring evidence is excluded explicitly.

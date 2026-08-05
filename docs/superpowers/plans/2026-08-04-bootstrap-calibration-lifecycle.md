@@ -4,7 +4,7 @@
 
 **Goal:** Build aggressive, auditable bootstrap calibration that uses one latest active label per stable candidate/component, recalculates residuals against the current scoring version, and records equivalent proposals only once.
 
-**Architecture:** Add an append-only normalized calibration-evidence table beside the existing feedback and dashboard-correction tables. A focused calibration service reads active evidence, rejects incompatible scoring versions, calculates residuals from current stored scores, bounds bootstrap proposals to plus or minus five points, and persists proposal/evidence links idempotently. Existing feedback and correction interfaces remain compatible and feed the normalized evidence ledger transactionally.
+**Architecture:** Add an append-only normalized calibration-evidence table beside the existing feedback and dashboard-correction tables. A focused calibration service reads active evidence, rejects incompatible scoring versions, calculates residuals from current stored scores, applies auditable age-based decay, bounds bootstrap proposals to plus or minus five points, and persists proposal/evidence links idempotently. Existing feedback and correction interfaces remain compatible and feed the normalized evidence ledger transactionally.
 
 **Tech Stack:** Python 3, dataclasses, SQLite/JSON1, argparse, pytest
 
@@ -14,6 +14,9 @@
 - Use stable `candidate_type + project_key + role_key + component_name` identity, not volatile candidate row IDs.
 - Only the latest submission for a stable candidate/component is active.
 - Count distinct candidates, not repeated submissions.
+- Weight active cross-candidate evidence by age: 0-30 days `1.00`, 31-90 days `0.70`, 91-180 days `0.40`, and older than 180 days `0.20`.
+- When a component has at least five active labels from the last 30 days, evidence older than 90 days is stability-only with proposal weight `0.00`.
+- Superseded same-candidate/component evidence always has proposal weight `0.00`.
 - Bootstrap stage covers 1-5 active candidates and bounds proposed changes to plus or minus 5 points.
 - Do not automatically modify `scoring_rules.json` or accept calibration proposals.
 - Repeating calibration with unchanged scoring version and evidence must not insert a duplicate proposal.
@@ -26,12 +29,12 @@
 
 - Modify `src/backstage_agent/candidate_models.py`: define normalized evidence, evaluated residual, and expanded proposal result dataclasses.
 - Modify `src/backstage_agent/storage.py`: create/migrate the evidence ledger, append/supersede active labels, query current evidence, and persist proposal evidence idempotently.
-- Modify `src/backstage_agent/calibration.py`: evaluate current-version residuals and build bounded bootstrap proposals.
+- Modify `src/backstage_agent/calibration.py`: evaluate current-version residuals, apply historical weight decay, and build bounded bootstrap proposals.
 - Modify `src/backstage_agent/cli.py`: record normalized CLI evidence and expose idempotent calibration output.
 - Modify `src/backstage_agent/ui.py`: append normalized evidence whenever a dashboard correction is saved while retaining the existing correction overlay.
 - Modify `tests/test_candidate_models.py`: cover model defaults and validation-oriented properties.
 - Modify `tests/test_candidate_storage.py`: cover supersession, stable identities, migration, history, and idempotent proposal persistence.
-- Modify `tests/test_calibration.py`: cover residual evaluation and bootstrap adjustment bounds.
+- Modify `tests/test_calibration.py`: cover residual evaluation, age-weight boundaries, recent-evidence displacement, and bootstrap adjustment bounds.
 - Modify `tests/test_cli_candidates.py`: cover command output and repeat-run behavior.
 - Modify `tests/test_ui_candidates.py`: prove correction saves also append calibration evidence.
 - Modify `README.md`, `PROJECT_STATE.md`, and `CHANGELOG.md`: document current bootstrap behavior and future maturity stages.
@@ -412,7 +415,7 @@ git commit -m "feat: retain latest calibration labels"
 
 **Interfaces:**
 - Consumes: active evidence rows and current candidate `score_json` from Task 2; `load_scoring_rules()` for the current version.
-- Produces: `EvaluatedCalibrationEvidence`, `evaluate_calibration_evidence(rows, current_version)`, `build_bootstrap_proposals(evaluated, scoring_version) -> tuple[list[tuple[CalibrationProposal, list[EvaluatedCalibrationEvidence]]], list[dict]]`, and `DecisionStore.record_calibration_proposal_idempotent(...) -> tuple[int, bool]`.
+- Produces: `EvaluatedCalibrationEvidence`, `evaluate_calibration_evidence(rows, current_version, calibration_date)`, `historical_weight(created_at, calibration_date) -> float`, `build_bootstrap_proposals(evaluated, scoring_version, calibration_date) -> tuple[list[tuple[CalibrationProposal, list[EvaluatedCalibrationEvidence]]], list[dict]]`, and `DecisionStore.record_calibration_proposal_idempotent(...) -> tuple[int, bool]`.
 
 - [ ] **Step 1: Write failing residual and proposal tests**
 
@@ -431,15 +434,16 @@ def test_evaluate_component_evidence_uses_current_score():
         "current_component_score": 15,
         "current_overall_score": 80,
         "current_scoring_version": "v2",
+        "created_at": "2026-08-01 00:00:00",
     }]
-    evaluated, excluded = evaluate_calibration_evidence(rows, "v2")
+    evaluated, excluded = evaluate_calibration_evidence(rows, "v2", date(2026, 8, 4))
     assert evaluated[0].residual == -7
     assert excluded == []
 
 
 def test_incompatible_current_version_is_excluded():
     rows = [{**row, "current_scoring_version": "v1"}]
-    evaluated, excluded = evaluate_calibration_evidence(rows, "v2")
+    evaluated, excluded = evaluate_calibration_evidence(rows, "v2", date(2026, 8, 4))
     assert evaluated == []
     assert excluded[0]["reason"] == "candidate_not_scored_with_current_rules"
 
@@ -449,7 +453,9 @@ def test_bootstrap_proposal_is_bounded_at_five_points():
         EvaluatedCalibrationEvidence(1, ("role", f"p-{i}", f"r-{i}", "role_value"), "role_value", -12)
         for i in range(3)
     ]
-    proposals, excluded = build_bootstrap_proposals(evaluated, scoring_version="v2")
+    proposals, excluded = build_bootstrap_proposals(
+        evaluated, scoring_version="v2", calibration_date=date(2026, 8, 4)
+    )
     proposal, supporting = proposals[0]
     assert proposal.maturity_stage == "bootstrap"
     assert proposal.example_count == 3
@@ -459,10 +465,40 @@ def test_bootstrap_proposal_is_bounded_at_five_points():
 
 
 def test_adjusted_current_scores_reduce_residual_pressure():
-    before = build_bootstrap_proposals(_evaluated([-7, -6]), "v1")[0][0][0]
-    after = build_bootstrap_proposals(_evaluated([-2, -1]), "v2")[0][0][0]
+    before = build_bootstrap_proposals(_evaluated([-7, -6]), "v1", date(2026, 8, 4))[0][0][0]
+    after = build_bootstrap_proposals(_evaluated([-2, -1]), "v2", date(2026, 8, 4))[0][0][0]
     assert before.proposed_adjustment == -5
     assert after.proposed_adjustment == -2
+
+
+@pytest.mark.parametrize(
+    ("created_at", "expected"),
+    [
+        ("2026-07-05 00:00:00", 1.00),
+        ("2026-07-04 00:00:00", 0.70),
+        ("2026-05-05 00:00:00", 0.70),
+        ("2026-05-04 00:00:00", 0.40),
+        ("2026-02-05 00:00:00", 0.40),
+        ("2026-02-04 00:00:00", 0.20),
+    ],
+)
+def test_historical_weight_boundaries(created_at, expected):
+    assert historical_weight(created_at, date(2026, 8, 4)) == expected
+
+
+def test_five_recent_labels_make_old_evidence_stability_only():
+    evaluated = _dated_evidence(
+        recent_residuals=[5, 5, 5, 5, 5],
+        old_residuals=[-20],
+    )
+    proposals, excluded = build_bootstrap_proposals(
+        evaluated, "v2", date(2026, 8, 4)
+    )
+    proposal, supporting = proposals[0]
+    assert proposal.proposed_adjustment == 5
+    assert proposal.effective_weight == 5.0
+    assert [item.weight for item in supporting if item.age_days > 90] == [0.0]
+    assert excluded == []
 ```
 
 - [ ] **Step 2: Run tests to verify RED**
@@ -484,6 +520,9 @@ class EvaluatedCalibrationEvidence:
     stable_key: tuple[str, str, str, str]
     component_name: str
     residual: int
+    created_at: datetime
+    age_days: int
+    weight: float
 
 
 @dataclass(frozen=True)
@@ -497,6 +536,7 @@ class CalibrationProposal:
     scoring_version: str = ""
     maturity_stage: str = "bootstrap"
     proposed_adjustment: int = 0
+    effective_weight: float = 0.0
     evidence_fingerprint: str = ""
     status: str = "proposed"
 ```
@@ -511,11 +551,13 @@ Have `DecisionStore.active_calibration_evidence()` join the newest candidate row
 - `current_overall_score`;
 - `current_component_score` from `json_extract(score_json, '$.subscores.' || component_name)`.
 
-Implement `evaluate_calibration_evidence()` so component targets compare with `current_component_score`, overall targets compare with `current_overall_score`, missing scores receive `current_score_unavailable`, and version mismatches receive `candidate_not_scored_with_current_rules`.
+Implement `evaluate_calibration_evidence()` so component targets compare with `current_component_score`, overall targets compare with `current_overall_score`, missing scores receive `current_score_unavailable`, and version mismatches receive `candidate_not_scored_with_current_rules`. Parse SQLite timestamps as UTC-neutral stored timestamps, calculate whole `age_days` relative to the injected `calibration_date`, and reject future timestamps with `evidence_timestamp_in_future`.
 
 - [ ] **Step 5: Implement bootstrap proposal calculation**
 
-Group evaluated rows by component and deduplicate by `stable_key`. For 1-5 distinct candidates, calculate `round(mean(residuals))` and clamp it to `[-5, 5]`. Generate the evidence fingerprint with SHA-256 over sorted strings of `evidence_id:residual`, and include scoring version in the hashed payload. Set proposal text to:
+Implement `historical_weight()` with inclusive day ranges `0-30 -> 1.00`, `31-90 -> 0.70`, `91-180 -> 0.40`, and `181+ -> 0.20`. Group evaluated rows by component and deduplicate by `stable_key`. If the group contains at least five items aged 0-30 days, set every item older than 90 days to weight `0.00` while retaining it as stability-only supporting evidence.
+
+For 1-5 distinct candidates, calculate `round(sum(residual * weight) / sum(weight))` and clamp it to `[-5, 5]`. Store `effective_weight=sum(weight)`. Generate the evidence fingerprint with SHA-256 over sorted strings of `evidence_id:residual:weight`, and include the scoring version. This makes unchanged reruns idempotent while allowing a new proposal when evidence crosses a defined age boundary. Set proposal text to:
 
 ```python
 f"Bootstrap proposal: adjust {component.replace('_', ' ')} by "
@@ -526,7 +568,7 @@ Do not generate learning or mature proposals; return an excluded summary with re
 
 - [ ] **Step 6: Persist proposals and evidence links idempotently**
 
-Add these columns to `calibration_proposals` with lightweight migrations: `scoring_version`, `maturity_stage`, `proposed_adjustment`, and `evidence_fingerprint`. Add a unique index on `(pattern_key, scoring_version, evidence_fingerprint)`.
+Add these columns to `calibration_proposals` with lightweight migrations: `scoring_version`, `maturity_stage`, `proposed_adjustment`, `effective_weight`, and `evidence_fingerprint`. Add a unique index on `(pattern_key, scoring_version, evidence_fingerprint)`.
 
 Create:
 
@@ -535,6 +577,8 @@ CREATE TABLE IF NOT EXISTS calibration_proposal_evidence (
   proposal_id INTEGER NOT NULL,
   evidence_id INTEGER NOT NULL,
   residual INTEGER NOT NULL,
+  age_days INTEGER NOT NULL,
+  evidence_weight REAL NOT NULL,
   PRIMARY KEY(proposal_id, evidence_id),
   FOREIGN KEY(proposal_id) REFERENCES calibration_proposals(id),
   FOREIGN KEY(evidence_id) REFERENCES candidate_calibration_evidence(id)
@@ -551,7 +595,7 @@ def record_calibration_proposal_idempotent(
 ) -> tuple[int, bool]:
 ```
 
-Use `INSERT ... ON CONFLICT DO NOTHING`, select the stable proposal ID, insert evidence links with `ON CONFLICT DO NOTHING`, and return `(proposal_id, cursor.rowcount == 1)`.
+Use `INSERT ... ON CONFLICT DO NOTHING`, select the stable proposal ID, insert evidence links including `age_days` and `evidence_weight` with `ON CONFLICT DO NOTHING`, and return `(proposal_id, cursor.rowcount == 1)`.
 
 - [ ] **Step 7: Run calibration and storage tests to verify GREEN**
 
@@ -620,9 +664,12 @@ def _calibration_patterns(store=None, rules=None) -> str:
     rules = rules or load_scoring_rules()
     current_version = str(rules["version"])
     rows = store.active_calibration_evidence()
-    evaluated, excluded = evaluate_calibration_evidence(rows, current_version)
+    calibration_date = date.today()
+    evaluated, excluded = evaluate_calibration_evidence(
+        rows, current_version, calibration_date
+    )
     proposals, maturity_exclusions = build_bootstrap_proposals(
-        evaluated, scoring_version=current_version
+        evaluated, scoring_version=current_version, calibration_date=calibration_date
     )
     output = []
     for proposal, supporting_evidence in proposals:
@@ -636,6 +683,7 @@ def _calibration_patterns(store=None, rules=None) -> str:
             "maturity_stage": proposal.maturity_stage,
             "proposed_adjustment": proposal.proposed_adjustment,
             "average_residual": proposal.average_delta,
+            "effective_evidence_weight": proposal.effective_weight,
             "created": created,
             "status": proposal.status,
         })
@@ -662,6 +710,8 @@ Update README calibration instructions to state that:
 - the latest feedback for a role/component replaces its active predecessor;
 - history is retained;
 - bootstrap proposals use 1-5 distinct candidates and are capped at ±5;
+- active historical evidence uses the documented 1.00/0.70/0.40/0.20 age weights;
+- five recent labels make evidence older than 90 days stability-only;
 - unchanged reruns do not create duplicates;
 - proposals remain manual and do not rewrite rules.
 
@@ -716,6 +766,8 @@ git commit -m "feat: expose idempotent bootstrap calibration"
 - [ ] Confirm three different roles count as three examples.
 - [ ] Confirm a repeat run with unchanged evidence and scoring version inserts no proposal.
 - [ ] Confirm changing the scoring version and rescoring candidates recalculates residuals before proposing another adjustment.
+- [ ] Confirm historical weights change only at the 30/90/180-day boundaries.
+- [ ] Confirm five recent labels prevent evidence older than 90 days from driving the adjustment while retaining it in proposal evidence.
 - [ ] Confirm no command modifies `scoring_rules.json` automatically.
 - [ ] Confirm the full pytest suite passes.
 - [ ] Confirm live Backstage access, macOS notifications, and the production SQLite database were not needed or modified.
