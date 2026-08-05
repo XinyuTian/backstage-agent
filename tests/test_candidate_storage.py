@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import date
 
 from backstage_agent.candidate_models import (
+    CalibrationEvidence,
     CalibrationProposal,
     CandidateFeatures,
     CandidateComponentCorrection,
@@ -17,6 +18,61 @@ from backstage_agent.candidate_models import (
 )
 from backstage_agent.models import ProjectNotice
 from backstage_agent.storage import DecisionStore
+
+
+def _calibration_evidence(candidate_id: int, human_target: int = 8) -> CalibrationEvidence:
+    return CalibrationEvidence(
+        source_type="dashboard_correction",
+        source_id=str(candidate_id),
+        candidate_type="role",
+        project_key="project",
+        role_key="role",
+        candidate_id_at_submission=candidate_id,
+        component_name="role_value",
+        failure_mode="subscore_override",
+        target_kind="component",
+        human_target=human_target,
+        submitted_agent_score=15,
+        scoring_version="test-v1",
+    )
+
+
+def test_latest_calibration_evidence_supersedes_same_role_component(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    first_id = store.record_calibration_evidence(_calibration_evidence(10, 8))
+    second_id = store.record_calibration_evidence(_calibration_evidence(11, 12))
+
+    active = store.active_calibration_evidence()
+    history = store.calibration_evidence_history("role", "project", "role", "role_value")
+
+    assert [row["id"] for row in active] == [second_id]
+    assert [row["id"] for row in history] == [second_id, first_id]
+    assert history[1]["superseded_at"] is not None
+
+
+def test_calibration_evidence_keeps_different_metrics_active(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    store.record_calibration_evidence(_calibration_evidence(10, 8))
+    store.record_calibration_evidence(
+        replace(_calibration_evidence(10, 4), component_name="logistics")
+    )
+
+    assert {row["component_name"] for row in store.active_calibration_evidence()} == {
+        "role_value",
+        "logistics",
+    }
+
+
+def test_calibration_identity_survives_candidate_rescore_id_change(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    first_id = store.record_calibration_evidence(_calibration_evidence(10, 8))
+    second_id = store.record_calibration_evidence(_calibration_evidence(99, 9))
+
+    assert second_id != first_id
+    assert store.active_calibration_evidence()[0]["candidate_id_at_submission"] == 99
+    assert len(
+        store.calibration_evidence_history("role", "project", "role", "role_value")
+    ) == 2
 
 
 def test_legacy_rows_are_preserved_without_runtime_access(tmp_path):

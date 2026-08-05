@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from .candidate_models import (
+    CalibrationEvidence,
     CalibrationProposal,
     CandidateComponentCorrection,
     CandidateFeatures,
@@ -494,6 +495,95 @@ class DecisionStore:
             )
             return int(cursor.lastrowid)
 
+    def record_calibration_evidence(self, evidence: CalibrationEvidence) -> int:
+        role_key = evidence.role_key or ""
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT id
+                FROM candidate_calibration_evidence
+                WHERE source_type = ? AND source_id = ? AND component_name = ?
+                """,
+                (evidence.source_type, evidence.source_id, evidence.component_name),
+            ).fetchone()
+            if existing:
+                return int(existing[0])
+            conn.execute(
+                """
+                UPDATE candidate_calibration_evidence
+                SET superseded_at = CURRENT_TIMESTAMP
+                WHERE candidate_type = ? AND project_key = ? AND role_key = ?
+                  AND component_name = ? AND superseded_at IS NULL
+                """,
+                (
+                    evidence.candidate_type,
+                    evidence.project_key,
+                    role_key,
+                    evidence.component_name,
+                ),
+            )
+            cursor = conn.execute(
+                """
+                INSERT INTO candidate_calibration_evidence (
+                  source_type, source_id, candidate_type, project_key, role_key,
+                  candidate_id_at_submission, component_name, failure_mode,
+                  target_kind, human_target, submitted_agent_score, scoring_version
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence.source_type,
+                    evidence.source_id,
+                    evidence.candidate_type,
+                    evidence.project_key,
+                    role_key,
+                    evidence.candidate_id_at_submission,
+                    evidence.component_name,
+                    evidence.failure_mode,
+                    evidence.target_kind,
+                    evidence.human_target,
+                    evidence.submitted_agent_score,
+                    evidence.scoring_version,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def active_calibration_evidence(self) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return list(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM candidate_calibration_evidence
+                    WHERE superseded_at IS NULL
+                    ORDER BY id
+                    """
+                )
+            )
+
+    def calibration_evidence_history(
+        self,
+        candidate_type: str,
+        project_key: str,
+        role_key: str,
+        component_name: str,
+    ) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            return list(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM candidate_calibration_evidence
+                    WHERE candidate_type = ? AND project_key = ? AND role_key = ?
+                      AND component_name = ?
+                    ORDER BY id DESC
+                    """,
+                    (candidate_type, project_key, role_key or "", component_name),
+                )
+            )
+
     def upsert_candidate_correction(
         self,
         correction: CandidateComponentCorrection,
@@ -822,6 +912,24 @@ class DecisionStore:
                   component_max_at_correction INTEGER NOT NULL,
                   UNIQUE(candidate_type, project_key, role_key, component_name)
                 );
+                CREATE TABLE IF NOT EXISTS candidate_calibration_evidence (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  superseded_at TEXT,
+                  source_type TEXT NOT NULL,
+                  source_id TEXT NOT NULL,
+                  candidate_type TEXT NOT NULL,
+                  project_key TEXT NOT NULL,
+                  role_key TEXT NOT NULL DEFAULT '',
+                  candidate_id_at_submission INTEGER NOT NULL,
+                  component_name TEXT NOT NULL,
+                  failure_mode TEXT NOT NULL,
+                  target_kind TEXT NOT NULL CHECK(target_kind IN ('component', 'overall')),
+                  human_target INTEGER NOT NULL,
+                  submitted_agent_score INTEGER NOT NULL,
+                  scoring_version TEXT NOT NULL,
+                  UNIQUE(source_type, source_id, component_name)
+                );
                 CREATE TABLE IF NOT EXISTS calibration_proposals (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -905,6 +1013,15 @@ class DecisionStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_candidate_score_corrections_identity
                 ON candidate_score_corrections(candidate_type, project_key, role_key)
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_evidence_active
+                ON candidate_calibration_evidence(
+                  candidate_type, project_key, role_key, component_name
+                )
+                WHERE superseded_at IS NULL
                 """
             )
 

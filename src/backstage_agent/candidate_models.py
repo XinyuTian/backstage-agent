@@ -138,6 +138,31 @@ class CandidateScore:
 
 
 @dataclass(frozen=True)
+class CalibrationEvidence:
+    source_type: str
+    source_id: str
+    candidate_type: str
+    project_key: str
+    role_key: str
+    candidate_id_at_submission: int
+    component_name: str
+    failure_mode: str
+    target_kind: str
+    human_target: int
+    submitted_agent_score: int
+    scoring_version: str
+
+    @property
+    def stable_key(self) -> tuple[str, str, str, str]:
+        return (
+            self.candidate_type,
+            self.project_key,
+            self.role_key or "",
+            self.component_name,
+        )
+
+
+@dataclass(frozen=True)
 class HumanFeedback:
     candidate_id: int
     agent_score: int
