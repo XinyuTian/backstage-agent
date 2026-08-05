@@ -493,60 +493,47 @@ class DecisionStore:
                     feedback.calibration_status,
                 ),
             )
-            return int(cursor.lastrowid)
+            feedback_id = int(cursor.lastrowid)
+            candidate = conn.execute(
+                """
+                SELECT candidate_type, project_key, COALESCE(role_key, '') AS role_key,
+                       scoring_version
+                FROM candidates
+                WHERE id = ?
+                """,
+                (feedback.candidate_id,),
+            ).fetchone()
+            if candidate is None:
+                raise ValueError(f"Candidate {feedback.candidate_id} was not found.")
+            failure_modes = feedback.failure_modes or ["score_disagreement"]
+            for index, component in enumerate(feedback.affected_components):
+                failure_mode = (
+                    failure_modes[index]
+                    if len(failure_modes) == len(feedback.affected_components)
+                    else failure_modes[0]
+                )
+                _record_calibration_evidence(
+                    conn,
+                    CalibrationEvidence(
+                        source_type="candidate_feedback",
+                        source_id=str(feedback_id),
+                        candidate_type=str(candidate[0]),
+                        project_key=str(candidate[1] or ""),
+                        role_key=str(candidate[2] or ""),
+                        candidate_id_at_submission=feedback.candidate_id,
+                        component_name=component,
+                        failure_mode=failure_mode,
+                        target_kind="overall",
+                        human_target=feedback.human_score,
+                        submitted_agent_score=feedback.agent_score,
+                        scoring_version=str(candidate[3]),
+                    ),
+                )
+            return feedback_id
 
     def record_calibration_evidence(self, evidence: CalibrationEvidence) -> int:
-        role_key = evidence.role_key or ""
         with self._connect() as conn:
-            existing = conn.execute(
-                """
-                SELECT id
-                FROM candidate_calibration_evidence
-                WHERE source_type = ? AND source_id = ? AND component_name = ?
-                """,
-                (evidence.source_type, evidence.source_id, evidence.component_name),
-            ).fetchone()
-            if existing:
-                return int(existing[0])
-            conn.execute(
-                """
-                UPDATE candidate_calibration_evidence
-                SET superseded_at = CURRENT_TIMESTAMP
-                WHERE candidate_type = ? AND project_key = ? AND role_key = ?
-                  AND component_name = ? AND superseded_at IS NULL
-                """,
-                (
-                    evidence.candidate_type,
-                    evidence.project_key,
-                    role_key,
-                    evidence.component_name,
-                ),
-            )
-            cursor = conn.execute(
-                """
-                INSERT INTO candidate_calibration_evidence (
-                  source_type, source_id, candidate_type, project_key, role_key,
-                  candidate_id_at_submission, component_name, failure_mode,
-                  target_kind, human_target, submitted_agent_score, scoring_version
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    evidence.source_type,
-                    evidence.source_id,
-                    evidence.candidate_type,
-                    evidence.project_key,
-                    role_key,
-                    evidence.candidate_id_at_submission,
-                    evidence.component_name,
-                    evidence.failure_mode,
-                    evidence.target_kind,
-                    evidence.human_target,
-                    evidence.submitted_agent_score,
-                    evidence.scoring_version,
-                ),
-            )
-            return int(cursor.lastrowid)
+            return _record_calibration_evidence(conn, evidence)
 
     def active_calibration_evidence(self) -> list[sqlite3.Row]:
         with self._connect() as conn:
@@ -607,6 +594,7 @@ class DecisionStore:
                   reason = excluded.reason,
                   scoring_version = excluded.scoring_version,
                   component_max_at_correction = excluded.component_max_at_correction,
+                  revision = candidate_score_corrections.revision + 1,
                   updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -624,7 +612,7 @@ class DecisionStore:
             )
             row = conn.execute(
                 """
-                SELECT id
+                SELECT id, revision
                 FROM candidate_score_corrections
                 WHERE candidate_type = ? AND project_key = ?
                   AND role_key = ? AND component_name = ?
@@ -636,7 +624,26 @@ class DecisionStore:
                     correction.component_name,
                 ),
             ).fetchone()
-            return int(row[0])
+            correction_id = int(row[0])
+            revision = int(row[1])
+            _record_calibration_evidence(
+                conn,
+                CalibrationEvidence(
+                    source_type="dashboard_correction",
+                    source_id=f"{correction_id}:{revision}",
+                    candidate_type=correction.candidate_type,
+                    project_key=correction.project_key,
+                    role_key=role_key,
+                    candidate_id_at_submission=correction.candidate_id_at_submission,
+                    component_name=correction.component_name,
+                    failure_mode="subscore_override",
+                    target_kind="component",
+                    human_target=correction.corrected_component_score,
+                    submitted_agent_score=correction.agent_component_score,
+                    scoring_version=correction.scoring_version,
+                ),
+            )
+            return correction_id
 
     def delete_candidate_correction(
         self,
@@ -654,6 +661,17 @@ class DecisionStore:
                 """,
                 (candidate_type, project_key, role_key or "", component_name),
             )
+            if cursor.rowcount > 0:
+                conn.execute(
+                    """
+                    UPDATE candidate_calibration_evidence
+                    SET superseded_at = CURRENT_TIMESTAMP
+                    WHERE candidate_type = ? AND project_key = ? AND role_key = ?
+                      AND component_name = ? AND source_type = 'dashboard_correction'
+                      AND superseded_at IS NULL
+                    """,
+                    (candidate_type, project_key, role_key or "", component_name),
+                )
             return cursor.rowcount > 0
 
     def corrections_for_candidate_keys(
@@ -910,6 +928,7 @@ class DecisionStore:
                   reason TEXT NOT NULL DEFAULT '',
                   scoring_version TEXT NOT NULL,
                   component_max_at_correction INTEGER NOT NULL,
+                  revision INTEGER NOT NULL DEFAULT 1,
                   UNIQUE(candidate_type, project_key, role_key, component_name)
                 );
                 CREATE TABLE IF NOT EXISTS candidate_calibration_evidence (
@@ -990,6 +1009,19 @@ class DecisionStore:
             }
             if "blocker_reason" not in application_columns:
                 conn.execute("ALTER TABLE applications ADD COLUMN blocker_reason TEXT")
+            correction_columns = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(candidate_score_corrections)"
+                ).fetchall()
+            }
+            if "revision" not in correction_columns:
+                conn.execute(
+                    """
+                    ALTER TABLE candidate_score_corrections
+                    ADD COLUMN revision INTEGER NOT NULL DEFAULT 1
+                    """
+                )
             _backfill_keys(conn)
             conn.execute(
                 """
@@ -1024,6 +1056,124 @@ class DecisionStore:
                 WHERE superseded_at IS NULL
                 """
             )
+            _backfill_calibration_evidence(conn)
+
+
+def _record_calibration_evidence(
+    conn: sqlite3.Connection,
+    evidence: CalibrationEvidence,
+) -> int:
+    role_key = evidence.role_key or ""
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM candidate_calibration_evidence
+        WHERE source_type = ? AND source_id = ? AND component_name = ?
+        """,
+        (evidence.source_type, evidence.source_id, evidence.component_name),
+    ).fetchone()
+    if existing:
+        return int(existing[0])
+    conn.execute(
+        """
+        UPDATE candidate_calibration_evidence
+        SET superseded_at = CURRENT_TIMESTAMP
+        WHERE candidate_type = ? AND project_key = ? AND role_key = ?
+          AND component_name = ? AND superseded_at IS NULL
+        """,
+        (
+            evidence.candidate_type,
+            evidence.project_key,
+            role_key,
+            evidence.component_name,
+        ),
+    )
+    cursor = conn.execute(
+        """
+        INSERT INTO candidate_calibration_evidence (
+          source_type, source_id, candidate_type, project_key, role_key,
+          candidate_id_at_submission, component_name, failure_mode,
+          target_kind, human_target, submitted_agent_score, scoring_version
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            evidence.source_type,
+            evidence.source_id,
+            evidence.candidate_type,
+            evidence.project_key,
+            role_key,
+            evidence.candidate_id_at_submission,
+            evidence.component_name,
+            evidence.failure_mode,
+            evidence.target_kind,
+            evidence.human_target,
+            evidence.submitted_agent_score,
+            evidence.scoring_version,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def _backfill_calibration_evidence(conn: sqlite3.Connection) -> None:
+    conn.row_factory = sqlite3.Row
+    feedback_rows = conn.execute(
+        """
+        SELECT f.*, c.candidate_type, c.project_key, COALESCE(c.role_key, '') AS role_key,
+               c.scoring_version
+        FROM candidate_feedback AS f
+        JOIN candidates AS c ON c.id = f.candidate_id
+        ORDER BY f.id
+        """
+    ).fetchall()
+    for row in feedback_rows:
+        components = json.loads(row["affected_components_json"])
+        failure_modes = json.loads(row["failure_modes_json"]) or ["score_disagreement"]
+        for index, component in enumerate(components):
+            failure_mode = (
+                failure_modes[index]
+                if len(failure_modes) == len(components)
+                else failure_modes[0]
+            )
+            _record_calibration_evidence(
+                conn,
+                CalibrationEvidence(
+                    source_type="candidate_feedback",
+                    source_id=str(row["id"]),
+                    candidate_type=str(row["candidate_type"]),
+                    project_key=str(row["project_key"] or ""),
+                    role_key=str(row["role_key"] or ""),
+                    candidate_id_at_submission=int(row["candidate_id"]),
+                    component_name=str(component),
+                    failure_mode=str(failure_mode),
+                    target_kind="overall",
+                    human_target=int(row["human_score"]),
+                    submitted_agent_score=int(row["agent_score"]),
+                    scoring_version=str(row["scoring_version"]),
+                ),
+            )
+
+    correction_rows = conn.execute(
+        "SELECT * FROM candidate_score_corrections ORDER BY id"
+    ).fetchall()
+    for row in correction_rows:
+        _record_calibration_evidence(
+            conn,
+            CalibrationEvidence(
+                source_type="dashboard_correction",
+                source_id=f"{row['id']}:{row['revision']}",
+                candidate_type=str(row["candidate_type"]),
+                project_key=str(row["project_key"]),
+                role_key=str(row["role_key"] or ""),
+                candidate_id_at_submission=int(row["candidate_id_at_submission"]),
+                component_name=str(row["component_name"]),
+                failure_mode="subscore_override",
+                target_kind="component",
+                human_target=int(row["corrected_component_score"]),
+                submitted_agent_score=int(row["agent_component_score"]),
+                scoring_version=str(row["scoring_version"]),
+            ),
+        )
 
 
 def _backfill_keys(conn: sqlite3.Connection) -> None:

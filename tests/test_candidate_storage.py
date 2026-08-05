@@ -225,6 +225,14 @@ def test_component_correction_upsert_replaces_only_matching_component(
     assert next(
         row for row in rows if row["component_name"] == "role_value"
     )["reason"] == "Final value"
+    role_history = store.calibration_evidence_history(
+        "role", "project", "role", "role_value"
+    )
+    assert [row["human_target"] for row in role_history] == [8, 10]
+    assert role_history[1]["superseded_at"] is not None
+    assert store.calibration_evidence_history(
+        "role", "project", "role", "logistics"
+    )[0]["human_target"] == 6
 
 
 def test_component_correction_reset_removes_only_matching_component(
@@ -269,6 +277,13 @@ def test_component_correction_reset_removes_only_matching_component(
     )[("project_only", "project", "")]
 
     assert [row["component_name"] for row in rows] == ["logistics"]
+    assert {
+        row["component_name"] for row in store.active_calibration_evidence()
+    } == {"logistics"}
+    role_value_history = store.calibration_evidence_history(
+        "project_only", "project", "", "role_value"
+    )
+    assert role_value_history[0]["superseded_at"] is not None
 
 
 def test_workbench_rows_use_effective_project_date_order(
@@ -466,6 +481,89 @@ def test_feedback_patterns_group_taxonomy(tmp_path, casting_notice_factory):
     assert patterns[0]["failure_mode"] == "overweighted_signal"
     assert patterns[0]["example_count"] == 2
     assert patterns[0]["average_delta"] < 0
+
+
+def test_record_candidate_feedback_expands_components_into_active_evidence(
+    tmp_path,
+    casting_notice_factory,
+):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    candidate_id = store.record_candidate(
+        CandidateInput.role_candidate(
+            project_id=1,
+            role_id=2,
+            project_key="project",
+            role_key="role",
+            title="Play - Lead",
+            notice=casting_notice_factory(),
+        ),
+        _features(),
+        [_match()],
+        _score(),
+    )
+
+    feedback_id = store.record_candidate_feedback(
+        HumanFeedback(
+            candidate_id=candidate_id,
+            agent_score=80,
+            human_score=60,
+            affected_components=["role_value", "logistics"],
+            failure_modes=["overweighted_signal"],
+            free_text_reason="Both are too high.",
+        )
+    )
+
+    evidence = store.active_calibration_evidence()
+    assert {(row["component_name"], row["source_id"]) for row in evidence} == {
+        ("role_value", str(feedback_id)),
+        ("logistics", str(feedback_id)),
+    }
+    assert all(row["target_kind"] == "overall" for row in evidence)
+
+
+def test_existing_feedback_is_backfilled_with_latest_active(
+    tmp_path,
+    casting_notice_factory,
+):
+    database_path = tmp_path / "db.sqlite3"
+    store = DecisionStore(database_path)
+    candidate_id = store.record_candidate(
+        CandidateInput.role_candidate(
+            project_id=1,
+            role_id=2,
+            project_key="project",
+            role_key="role",
+            title="Play - Lead",
+            notice=casting_notice_factory(),
+        ),
+        _features(),
+        [_match()],
+        _score(),
+    )
+    with store._connect() as conn:
+        conn.execute("DELETE FROM candidate_calibration_evidence")
+        for human_score in (50, 70):
+            conn.execute(
+                """
+                INSERT INTO candidate_feedback (
+                  candidate_id, agent_score, human_score, score_delta,
+                  affected_components_json, failure_modes_json,
+                  free_text_reason, calibration_status
+                ) VALUES (?, 80, ?, ?, '["role_value"]',
+                          '["overweighted_signal"]', 'Legacy',
+                          'unreviewed_for_calibration')
+                """,
+                (candidate_id, human_score, human_score - 80),
+            )
+
+    migrated = DecisionStore(database_path)
+    history = migrated.calibration_evidence_history(
+        "role", "project", "role", "role_value"
+    )
+
+    assert [row["human_target"] for row in history] == [70, 50]
+    assert history[0]["superseded_at"] is None
+    assert history[1]["superseded_at"] is not None
 
 
 def test_feedback_patterns_expand_all_taxonomy_pairs(tmp_path, casting_notice_factory):
