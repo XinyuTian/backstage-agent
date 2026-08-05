@@ -1,10 +1,11 @@
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 
 from backstage_agent.candidate_models import (
     CalibrationEvidence,
+    EvaluatedCalibrationEvidence,
     CalibrationProposal,
     CandidateFeatures,
     CandidateComponentCorrection,
@@ -643,6 +644,48 @@ def test_record_calibration_proposal_persists_fields(tmp_path):
     assert row[4] == "missing_context"
     assert row[5] == "Reduce project signal weight when context is sparse."
     assert row[6] == "accepted"
+
+
+def test_record_calibration_proposal_is_idempotent_for_same_evidence(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    proposal = CalibrationProposal(
+        pattern_key="role_value:weighted_residual",
+        example_count=1,
+        average_delta=-5.0,
+        affected_component="role_value",
+        failure_mode="weighted_residual",
+        proposal_text="Bootstrap adjustment.",
+        scoring_version="test-v2",
+        maturity_stage="bootstrap",
+        proposed_adjustment=-5,
+        effective_weight=1.0,
+        evidence_fingerprint="abc123",
+    )
+    evidence = [
+        EvaluatedCalibrationEvidence(
+            evidence_id=1,
+            stable_key=("role", "project", "role", "role_value"),
+            component_name="role_value",
+            residual=-7,
+            created_at=datetime(2026, 8, 1),
+            age_days=3,
+            weight=1.0,
+        )
+    ]
+
+    first_id, first_created = store.record_calibration_proposal_idempotent(
+        proposal, evidence
+    )
+    second_id, second_created = store.record_calibration_proposal_idempotent(
+        proposal, evidence
+    )
+
+    assert second_id == first_id
+    assert first_created is True
+    assert second_created is False
+    with store._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM calibration_proposals").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM calibration_proposal_evidence").fetchone()[0] == 1
 
 
 def test_candidate_rescore_sources_and_clear_by_date(tmp_path, casting_notice_factory):

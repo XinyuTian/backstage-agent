@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 from .models import CastingNotice
@@ -192,6 +193,17 @@ class CandidateComponentCorrection:
 
 
 @dataclass(frozen=True)
+class EvaluatedCalibrationEvidence:
+    evidence_id: int
+    stable_key: tuple[str, str, str, str]
+    component_name: str
+    residual: int
+    created_at: datetime
+    age_days: int
+    weight: float
+
+
+@dataclass(frozen=True)
 class CalibrationProposal:
     pattern_key: str
     example_count: int
@@ -199,4 +211,9 @@ class CalibrationProposal:
     affected_component: str
     failure_mode: str
     proposal_text: str
+    scoring_version: str = ""
+    maturity_stage: str = "bootstrap"
+    proposed_adjustment: int = 0
+    effective_weight: float = 0.0
+    evidence_fingerprint: str = ""
     status: str = "proposed"

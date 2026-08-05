@@ -13,6 +13,7 @@ from .candidate_models import (
     CandidateFeatures,
     CandidateInput,
     CandidateScore,
+    EvaluatedCalibrationEvidence,
     HumanFeedback,
     RequirementMatch,
 )
@@ -541,10 +542,25 @@ class DecisionStore:
             return list(
                 conn.execute(
                     """
-                    SELECT *
-                    FROM candidate_calibration_evidence
-                    WHERE superseded_at IS NULL
-                    ORDER BY id
+                    SELECT
+                      evidence.*,
+                      current.scoring_version AS current_scoring_version,
+                      current.overall_score AS current_overall_score,
+                      json_extract(
+                        current.score_json,
+                        '$.subscores.' || evidence.component_name
+                      ) AS current_component_score
+                    FROM candidate_calibration_evidence AS evidence
+                    LEFT JOIN candidates AS current
+                      ON current.id = (
+                        SELECT MAX(newest.id)
+                        FROM candidates AS newest
+                        WHERE newest.candidate_type = evidence.candidate_type
+                          AND COALESCE(newest.project_key, '') = evidence.project_key
+                          AND COALESCE(newest.role_key, '') = evidence.role_key
+                      )
+                    WHERE evidence.superseded_at IS NULL
+                    ORDER BY evidence.id
                     """
                 )
             )
@@ -800,6 +816,75 @@ class DecisionStore:
             )
             return int(cursor.lastrowid)
 
+    def record_calibration_proposal_idempotent(
+        self,
+        proposal: CalibrationProposal,
+        evidence: list[EvaluatedCalibrationEvidence],
+    ) -> tuple[int, bool]:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO calibration_proposals (
+                  pattern_key, example_count, average_delta, affected_component,
+                  failure_mode, proposal_text, scoring_version, maturity_stage,
+                  proposed_adjustment, effective_weight, evidence_fingerprint, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(pattern_key, scoring_version, evidence_fingerprint)
+                WHERE scoring_version != '' AND evidence_fingerprint != ''
+                DO NOTHING
+                """,
+                (
+                    proposal.pattern_key,
+                    proposal.example_count,
+                    proposal.average_delta,
+                    proposal.affected_component,
+                    proposal.failure_mode,
+                    proposal.proposal_text,
+                    proposal.scoring_version,
+                    proposal.maturity_stage,
+                    proposal.proposed_adjustment,
+                    proposal.effective_weight,
+                    proposal.evidence_fingerprint,
+                    proposal.status,
+                ),
+            )
+            created = cursor.rowcount == 1
+            row = conn.execute(
+                """
+                SELECT id
+                FROM calibration_proposals
+                WHERE pattern_key = ? AND scoring_version = ?
+                  AND evidence_fingerprint = ?
+                """,
+                (
+                    proposal.pattern_key,
+                    proposal.scoring_version,
+                    proposal.evidence_fingerprint,
+                ),
+            ).fetchone()
+            proposal_id = int(row[0])
+            conn.executemany(
+                """
+                INSERT INTO calibration_proposal_evidence (
+                  proposal_id, evidence_id, residual, age_days, evidence_weight
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(proposal_id, evidence_id) DO NOTHING
+                """,
+                [
+                    (
+                        proposal_id,
+                        item.evidence_id,
+                        item.residual,
+                        item.age_days,
+                        item.weight,
+                    )
+                    for item in evidence
+                ],
+            )
+            return proposal_id, created
+
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
 
@@ -958,7 +1043,22 @@ class DecisionStore:
                   affected_component TEXT NOT NULL,
                   failure_mode TEXT NOT NULL,
                   proposal_text TEXT NOT NULL,
+                  scoring_version TEXT NOT NULL DEFAULT '',
+                  maturity_stage TEXT NOT NULL DEFAULT 'bootstrap',
+                  proposed_adjustment INTEGER NOT NULL DEFAULT 0,
+                  effective_weight REAL NOT NULL DEFAULT 0,
+                  evidence_fingerprint TEXT NOT NULL DEFAULT '',
                   status TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS calibration_proposal_evidence (
+                  proposal_id INTEGER NOT NULL,
+                  evidence_id INTEGER NOT NULL,
+                  residual INTEGER NOT NULL,
+                  age_days INTEGER NOT NULL,
+                  evidence_weight REAL NOT NULL,
+                  PRIMARY KEY(proposal_id, evidence_id),
+                  FOREIGN KEY(proposal_id) REFERENCES calibration_proposals(id),
+                  FOREIGN KEY(evidence_id) REFERENCES candidate_calibration_evidence(id)
                 );
                 """
             )
@@ -1022,6 +1122,21 @@ class DecisionStore:
                     ADD COLUMN revision INTEGER NOT NULL DEFAULT 1
                     """
                 )
+            proposal_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(calibration_proposals)")
+            }
+            for column_name, definition in {
+                "scoring_version": "TEXT NOT NULL DEFAULT ''",
+                "maturity_stage": "TEXT NOT NULL DEFAULT 'bootstrap'",
+                "proposed_adjustment": "INTEGER NOT NULL DEFAULT 0",
+                "effective_weight": "REAL NOT NULL DEFAULT 0",
+                "evidence_fingerprint": "TEXT NOT NULL DEFAULT ''",
+            }.items():
+                if column_name not in proposal_columns:
+                    conn.execute(
+                        f"ALTER TABLE calibration_proposals ADD COLUMN {column_name} {definition}"
+                    )
             _backfill_keys(conn)
             conn.execute(
                 """
@@ -1054,6 +1169,15 @@ class DecisionStore:
                   candidate_type, project_key, role_key, component_name
                 )
                 WHERE superseded_at IS NULL
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_proposal_identity
+                ON calibration_proposals(
+                  pattern_key, scoring_version, evidence_fingerprint
+                )
+                WHERE scoring_version != '' AND evidence_fingerprint != ''
                 """
             )
             _backfill_calibration_evidence(conn)
