@@ -247,6 +247,57 @@ def test_numbered_gender_requirement_mismatches_female_profile(actor_profile_fac
     assert matches[0].local_value == "female"
 
 
+def test_inferred_requirement_is_visible_but_not_applicable(actor_profile_factory):
+    matches = match_requirements(
+        _features(
+            {
+                "gender": {
+                    "value": "Male",
+                    "required": True,
+                    "evidence": "Masculine presentation preferred.",
+                    "certainty": "inferred",
+                }
+            }
+        ),
+        actor_profile_factory(genders=["female"]),
+        _rules(),
+    )
+
+    assert matches[0].requirement_key == "gender"
+    assert matches[0].status is RequirementStatus.NOT_APPLICABLE
+    assert matches[0].required is False
+    assert matches[0].score_impact == 0
+
+
+def test_explicit_canonical_gender_from_combined_evidence_mismatches(
+    actor_profile_factory,
+):
+    matches = match_requirements(
+        _features(
+            {
+                "gender": {
+                    "value": "Male",
+                    "required": True,
+                    "evidence": "Lead, Male, 18-28",
+                    "certainty": "explicit",
+                },
+                "age_range": {
+                    "value": "18-28",
+                    "required": True,
+                    "evidence": "Lead, Male, 18-28",
+                    "certainty": "explicit",
+                },
+            }
+        ),
+        actor_profile_factory(genders=["female"]),
+        _rules(),
+    )
+
+    gender = next(match for match in matches if match.requirement_key == "gender")
+    assert gender.status is RequirementStatus.NOT_MET
+    assert gender.required is True
+
+
 def test_canonical_gender_requirement_mismatches_female_profile(actor_profile_factory):
     matches = match_requirements(
         _features({"gender": "Male"}),
