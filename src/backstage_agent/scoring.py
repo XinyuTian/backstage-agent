@@ -119,11 +119,16 @@ def _requirement_score(matches: list[RequirementMatch], max_points: int) -> int:
 
 
 def _requirement_breakdown(matches: list[RequirementMatch], max_points: int) -> tuple[int, dict[str, int]]:
-    mandatory = [match for match in matches if match.required]
-    optional = [match for match in matches if not match.required]
+    scored_matches = [
+        match
+        for match in matches
+        if match.status is not RequirementStatus.NOT_APPLICABLE
+    ]
+    mandatory = [match for match in scored_matches if match.required]
+    optional = [match for match in scored_matches if not match.required]
     if mandatory and any(match.status is RequirementStatus.NOT_MET for match in mandatory):
-        return 0, {match.requirement_key: 0 for match in matches}
-    if not matches:
+        return 0, {match.requirement_key: 0 for match in scored_matches}
+    if not scored_matches:
         baseline = int(round(max_points * _NO_REQUIREMENTS_BASELINE_FRACTION))
         return baseline, {"requirements_baseline": baseline}
 

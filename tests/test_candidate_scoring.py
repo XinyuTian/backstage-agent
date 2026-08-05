@@ -103,9 +103,17 @@ def test_mandatory_requirement_not_met_caps_score():
 def test_required_gender_mismatch_uses_existing_mandatory_cap(actor_profile_factory):
     features = _features(
         requirements={
-            "gender_male": {
+            "gender": {
+                "value": "Male",
                 "required": True,
-                "evidence": "Looking for: Male, 25-35",
+                "evidence": "Lead, Male, 18-28",
+                "certainty": "explicit",
+            },
+            "age_range": {
+                "value": "18-28",
+                "required": True,
+                "evidence": "Lead, Male, 18-28",
+                "certainty": "explicit",
             }
         }
     )
@@ -117,6 +125,42 @@ def test_required_gender_mismatch_uses_existing_mandatory_cap(actor_profile_fact
     assert score.overall_score == 15
     assert score.score_caps == ["mandatory_requirement_not_met"]
     assert "gender requirement not met" in score.negative_drivers
+
+
+def test_inferred_requirement_does_not_change_requirement_score_or_caps():
+    rules = _rules()
+    features = _features(
+        requirements={
+            "gender": {
+                "value": "Male",
+                "required": True,
+                "evidence": "Masculine presentation preferred.",
+                "certainty": "inferred",
+            }
+        }
+    )
+    matches = [
+        RequirementMatch(
+            requirement_key="gender",
+            status=RequirementStatus.NOT_APPLICABLE,
+            required=False,
+            local_value="",
+            evidence="Masculine presentation preferred.",
+            reason="Inferred requirement is shown for review but not scored.",
+            score_impact=0,
+        )
+    ]
+
+    inferred_score = score_candidate(features, matches, rules)
+    baseline_score = score_candidate(_features(requirements={}), [], rules)
+
+    assert (
+        inferred_score.subscores["their_requirements_match"]
+        == baseline_score.subscores["their_requirements_match"]
+    )
+    assert inferred_score.score_caps == baseline_score.score_caps
+    assert "gender requirement met" not in inferred_score.positive_drivers
+    assert "gender needs user input" not in inferred_score.negative_drivers
 
 
 def test_missing_critical_data_caps_score_at_sixty():
