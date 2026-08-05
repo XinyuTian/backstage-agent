@@ -1,4 +1,5 @@
 from backstage_agent.candidate_models import (
+    CalibrationEvidence,
     CandidateFeatures,
     CalibrationProposal,
     CandidateInput,
@@ -9,6 +10,25 @@ from backstage_agent.candidate_models import (
     RequirementStatus,
     ScoreBand,
 )
+
+
+def test_calibration_evidence_uses_stable_candidate_component_key():
+    evidence = CalibrationEvidence(
+        source_type="dashboard_correction",
+        source_id="10:1",
+        candidate_type="role",
+        project_key="project",
+        role_key="role",
+        candidate_id_at_submission=10,
+        component_name="role_value",
+        failure_mode="subscore_override",
+        target_kind="component",
+        human_target=8,
+        submitted_agent_score=15,
+        scoring_version="test-v1",
+    )
+
+    assert evidence.stable_key == ("role", "project", "role", "role_value")
 
 
 def test_candidate_input_accepts_role_or_project_only(casting_notice_factory):

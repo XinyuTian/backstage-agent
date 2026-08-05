@@ -6,6 +6,7 @@ Future changes in this file should be concise and behavior-focused. Include user
 
 ### Added
 
+- Added append-only normalized calibration evidence, latest-label supersession per stable candidate/component, legacy feedback backfill, versioned residual evaluation, auditable historical weight decay, and idempotent bootstrap proposals capped at plus or minus five points.
 - Added resolved scoring snapshots and a single production/display recomputation path for component totals, caps, and bands.
 - Added stable per-candidate/component corrections with optional reasons, overwrite-in-place semantics, Reset, stale-version Reconfirm, and current-correction calibration patterns.
 - Introduced lightweight repository documentation for future coding agents, including project state, architecture, module guide, and agent workflow instructions.

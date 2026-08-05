@@ -1,9 +1,11 @@
 import json
 import sqlite3
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 
 from backstage_agent.candidate_models import (
+    CalibrationEvidence,
+    EvaluatedCalibrationEvidence,
     CalibrationProposal,
     CandidateFeatures,
     CandidateComponentCorrection,
@@ -17,6 +19,61 @@ from backstage_agent.candidate_models import (
 )
 from backstage_agent.models import ProjectNotice
 from backstage_agent.storage import DecisionStore
+
+
+def _calibration_evidence(candidate_id: int, human_target: int = 8) -> CalibrationEvidence:
+    return CalibrationEvidence(
+        source_type="dashboard_correction",
+        source_id=str(candidate_id),
+        candidate_type="role",
+        project_key="project",
+        role_key="role",
+        candidate_id_at_submission=candidate_id,
+        component_name="role_value",
+        failure_mode="subscore_override",
+        target_kind="component",
+        human_target=human_target,
+        submitted_agent_score=15,
+        scoring_version="test-v1",
+    )
+
+
+def test_latest_calibration_evidence_supersedes_same_role_component(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    first_id = store.record_calibration_evidence(_calibration_evidence(10, 8))
+    second_id = store.record_calibration_evidence(_calibration_evidence(11, 12))
+
+    active = store.active_calibration_evidence()
+    history = store.calibration_evidence_history("role", "project", "role", "role_value")
+
+    assert [row["id"] for row in active] == [second_id]
+    assert [row["id"] for row in history] == [second_id, first_id]
+    assert history[1]["superseded_at"] is not None
+
+
+def test_calibration_evidence_keeps_different_metrics_active(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    store.record_calibration_evidence(_calibration_evidence(10, 8))
+    store.record_calibration_evidence(
+        replace(_calibration_evidence(10, 4), component_name="logistics")
+    )
+
+    assert {row["component_name"] for row in store.active_calibration_evidence()} == {
+        "role_value",
+        "logistics",
+    }
+
+
+def test_calibration_identity_survives_candidate_rescore_id_change(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    first_id = store.record_calibration_evidence(_calibration_evidence(10, 8))
+    second_id = store.record_calibration_evidence(_calibration_evidence(99, 9))
+
+    assert second_id != first_id
+    assert store.active_calibration_evidence()[0]["candidate_id_at_submission"] == 99
+    assert len(
+        store.calibration_evidence_history("role", "project", "role", "role_value")
+    ) == 2
 
 
 def test_legacy_rows_are_preserved_without_runtime_access(tmp_path):
@@ -169,6 +226,14 @@ def test_component_correction_upsert_replaces_only_matching_component(
     assert next(
         row for row in rows if row["component_name"] == "role_value"
     )["reason"] == "Final value"
+    role_history = store.calibration_evidence_history(
+        "role", "project", "role", "role_value"
+    )
+    assert [row["human_target"] for row in role_history] == [8, 10]
+    assert role_history[1]["superseded_at"] is not None
+    assert store.calibration_evidence_history(
+        "role", "project", "role", "logistics"
+    )[0]["human_target"] == 6
 
 
 def test_component_correction_reset_removes_only_matching_component(
@@ -213,6 +278,13 @@ def test_component_correction_reset_removes_only_matching_component(
     )[("project_only", "project", "")]
 
     assert [row["component_name"] for row in rows] == ["logistics"]
+    assert {
+        row["component_name"] for row in store.active_calibration_evidence()
+    } == {"logistics"}
+    role_value_history = store.calibration_evidence_history(
+        "project_only", "project", "", "role_value"
+    )
+    assert role_value_history[0]["superseded_at"] is not None
 
 
 def test_workbench_rows_use_effective_project_date_order(
@@ -412,6 +484,96 @@ def test_feedback_patterns_group_taxonomy(tmp_path, casting_notice_factory):
     assert patterns[0]["average_delta"] < 0
 
 
+def test_record_candidate_feedback_expands_components_into_active_evidence(
+    tmp_path,
+    casting_notice_factory,
+):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    candidate_id = store.record_candidate(
+        CandidateInput.role_candidate(
+            project_id=1,
+            role_id=2,
+            project_key="project",
+            role_key="role",
+            title="Play - Lead",
+            notice=casting_notice_factory(),
+        ),
+        _features(),
+        [_match()],
+        _score(),
+    )
+
+    feedback_id = store.record_candidate_feedback(
+        HumanFeedback(
+            candidate_id=candidate_id,
+            agent_score=80,
+            human_score=60,
+            affected_components=["role_value", "logistics"],
+            failure_modes=["overweighted_signal"],
+            free_text_reason="Both are too high.",
+        )
+    )
+
+    evidence = store.active_calibration_evidence()
+    assert {(row["component_name"], row["source_id"]) for row in evidence} == {
+        ("role_value", str(feedback_id)),
+        ("logistics", str(feedback_id)),
+    }
+    assert all(row["target_kind"] == "overall" for row in evidence)
+
+
+def test_existing_feedback_is_backfilled_with_latest_active(
+    tmp_path,
+    casting_notice_factory,
+):
+    database_path = tmp_path / "db.sqlite3"
+    store = DecisionStore(database_path)
+    candidate_id = store.record_candidate(
+        CandidateInput.role_candidate(
+            project_id=1,
+            role_id=2,
+            project_key="project",
+            role_key="role",
+            title="Play - Lead",
+            notice=casting_notice_factory(),
+        ),
+        _features(),
+        [_match()],
+        _score(),
+    )
+    with store._connect() as conn:
+        conn.execute("DELETE FROM candidate_calibration_evidence")
+        for human_score, created_at in (
+            (50, "2026-01-01 00:00:00"),
+            (70, "2026-02-01 00:00:00"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO candidate_feedback (
+                  created_at, candidate_id, agent_score, human_score, score_delta,
+                  affected_components_json, failure_modes_json,
+                  free_text_reason, calibration_status
+                ) VALUES (?, ?, 80, ?, ?, '["role_value"]',
+                          '["overweighted_signal"]', 'Legacy',
+                          'unreviewed_for_calibration')
+                """,
+                (created_at, candidate_id, human_score, human_score - 80),
+            )
+
+    migrated = DecisionStore(database_path)
+    history = migrated.calibration_evidence_history(
+        "role", "project", "role", "role_value"
+    )
+
+    assert [row["human_target"] for row in history] == [70, 50]
+    assert history[0]["superseded_at"] is None
+    assert history[1]["superseded_at"] is not None
+    assert [row["created_at"] for row in history] == [
+        "2026-02-01 00:00:00",
+        "2026-01-01 00:00:00",
+    ]
+
+
 def test_feedback_patterns_expand_all_taxonomy_pairs(tmp_path, casting_notice_factory):
     store = DecisionStore(tmp_path / "db.sqlite3")
     candidate = CandidateInput.role_candidate(
@@ -489,6 +651,48 @@ def test_record_calibration_proposal_persists_fields(tmp_path):
     assert row[4] == "missing_context"
     assert row[5] == "Reduce project signal weight when context is sparse."
     assert row[6] == "accepted"
+
+
+def test_record_calibration_proposal_is_idempotent_for_same_evidence(tmp_path):
+    store = DecisionStore(tmp_path / "db.sqlite3")
+    proposal = CalibrationProposal(
+        pattern_key="role_value:weighted_residual",
+        example_count=1,
+        average_delta=-5.0,
+        affected_component="role_value",
+        failure_mode="weighted_residual",
+        proposal_text="Bootstrap adjustment.",
+        scoring_version="test-v2",
+        maturity_stage="bootstrap",
+        proposed_adjustment=-5,
+        effective_weight=1.0,
+        evidence_fingerprint="abc123",
+    )
+    evidence = [
+        EvaluatedCalibrationEvidence(
+            evidence_id=1,
+            stable_key=("role", "project", "role", "role_value"),
+            component_name="role_value",
+            residual=-7,
+            created_at=datetime(2026, 8, 1),
+            age_days=3,
+            weight=1.0,
+        )
+    ]
+
+    first_id, first_created = store.record_calibration_proposal_idempotent(
+        proposal, evidence
+    )
+    second_id, second_created = store.record_calibration_proposal_idempotent(
+        proposal, evidence
+    )
+
+    assert second_id == first_id
+    assert first_created is True
+    assert second_created is False
+    with store._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM calibration_proposals").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM calibration_proposal_evidence").fetchone()[0] == 1
 
 
 def test_candidate_rescore_sources_and_clear_by_date(tmp_path, casting_notice_factory):

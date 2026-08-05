@@ -17,7 +17,7 @@
 - Weight active cross-candidate evidence by age: 0-30 days `1.00`, 31-90 days `0.70`, 91-180 days `0.40`, and older than 180 days `0.20`.
 - When a component has at least five active labels from the last 30 days, evidence older than 90 days is stability-only with proposal weight `0.00`.
 - Superseded same-candidate/component evidence always has proposal weight `0.00`.
-- Bootstrap stage covers 1-5 active candidates and bounds proposed changes to plus or minus 5 points.
+- Bootstrap stage accepts any active candidate count and bounds proposed changes to plus or minus 5 points.
 - Do not automatically modify `scoring_rules.json` or accept calibration proposals.
 - Repeating calibration with unchanged scoring version and evidence must not insert a duplicate proposal.
 - Existing dashboard correction display and overwrite behavior must remain unchanged.
@@ -557,14 +557,14 @@ Implement `evaluate_calibration_evidence()` so component targets compare with `c
 
 Implement `historical_weight()` with inclusive day ranges `0-30 -> 1.00`, `31-90 -> 0.70`, `91-180 -> 0.40`, and `181+ -> 0.20`. Group evaluated rows by component and deduplicate by `stable_key`. If the group contains at least five items aged 0-30 days, set every item older than 90 days to weight `0.00` while retaining it as stability-only supporting evidence.
 
-For 1-5 distinct candidates, calculate `round(sum(residual * weight) / sum(weight))` and clamp it to `[-5, 5]`. Store `effective_weight=sum(weight)`. Generate the evidence fingerprint with SHA-256 over sorted strings of `evidence_id:residual:weight`, and include the scoring version. This makes unchanged reruns idempotent while allowing a new proposal when evidence crosses a defined age boundary. Set proposal text to:
+For any positive number of distinct active candidates, calculate `round(sum(residual * weight) / sum(weight))` and clamp it to `[-5, 5]`. Store `effective_weight=sum(weight)`. Generate the evidence fingerprint with SHA-256 over sorted strings of `evidence_id:residual:weight`, and include the scoring version. This makes unchanged reruns idempotent while allowing a new proposal when evidence crosses a defined age boundary. Set proposal text to:
 
 ```python
 f"Bootstrap proposal: adjust {component.replace('_', ' ')} by "
 f"{adjustment:+d} points from {len(group)} active candidate labels."
 ```
 
-Do not generate learning or mature proposals; return an excluded summary with reason `future_maturity_stage_not_implemented` for groups above five.
+Do not generate learning or mature proposals; all current groups remain in bootstrap until those future stages are explicitly enabled.
 
 - [ ] **Step 6: Persist proposals and evidence links idempotently**
 

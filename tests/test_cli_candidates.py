@@ -1,8 +1,10 @@
 import json
+from datetime import date
 
 from backstage_agent.candidate_models import HumanFeedback
 from backstage_agent.agent import CandidateScoringResult
 from backstage_agent.cli import (
+    _calibration_patterns,
     _candidate_rows_json,
     _record_feedback_from_args,
     _rescore_candidates_for_date,
@@ -30,6 +32,66 @@ class FakeStore:
     def record_candidate_feedback(self, feedback: HumanFeedback):
         self.feedback = feedback
         return 9
+
+
+class FakeCalibrationStore:
+    def __init__(self):
+        self.proposals = {}
+
+    def active_calibration_evidence(self):
+        return [
+            {
+                "id": index,
+                "candidate_type": "role",
+                "project_key": f"project-{index}",
+                "role_key": f"role-{index}",
+                "component_name": "role_value",
+                "target_kind": "component",
+                "human_target": 5,
+                "current_component_score": 15,
+                "current_overall_score": 80,
+                "current_scoring_version": "test-v2",
+                "created_at": "2026-08-01 00:00:00",
+            }
+            for index in range(1, 4)
+        ]
+
+    def record_calibration_proposal_idempotent(self, proposal, evidence):
+        key = (
+            proposal.pattern_key,
+            proposal.scoring_version,
+            proposal.evidence_fingerprint,
+        )
+        created = key not in self.proposals
+        if created:
+            self.proposals[key] = len(self.proposals) + 1
+        return self.proposals[key], created
+
+
+def test_calibration_patterns_reports_idempotent_bootstrap_proposal():
+    store = FakeCalibrationStore()
+
+    first = json.loads(
+        _calibration_patterns(
+            store=store,
+            rules={"version": "test-v2"},
+            calibration_date=date(2026, 8, 4),
+        )
+    )
+    second = json.loads(
+        _calibration_patterns(
+            store=store,
+            rules={"version": "test-v2"},
+            calibration_date=date(2026, 8, 4),
+        )
+    )
+
+    assert first["proposals"][0]["created"] is True
+    assert second["proposals"][0]["created"] is False
+    assert first["proposals"][0]["maturity_stage"] == "bootstrap"
+    assert first["proposals"][0]["proposed_adjustment"] == -5
+    assert first["active_evidence_count"] == 3
+    assert second["message"] == "No new calibration proposal was needed."
 
 
 def test_candidate_rows_json_outputs_ranked_candidates():

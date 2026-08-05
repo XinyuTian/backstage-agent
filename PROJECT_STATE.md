@@ -1,6 +1,6 @@
 # Project State
 
-Last updated: 2026-07-24
+Last updated: 2026-08-04
 
 This file represents the present state of the project. Edit it in place as functionality, priorities, blockers, or known issues change; do not use it as a historical log.
 
@@ -19,7 +19,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - Candidate feature extraction canonicalizes explicit casting gender and numeric age facts from loose numbered requirements, preserves ambiguous source text conservatively, and keeps inferred requirements visible but score-neutral; explicit gender mismatches use the normal mandatory-mismatch cap without hiding candidates.
 - Daily scoring refreshes repeated project and role identities from the newest digest and Backstage page data, then preserves existing candidate scores by default.
 - Candidate-first storage in `src/backstage_agent/storage.py` for ranked candidates, structured feature and requirement-match payloads, human score feedback, feedback-pattern aggregation, and calibration proposals.
-- Human feedback capture for candidate score disagreement and calibration proposal generation, using reusable taxonomy fields instead of one-off prompt tweaks.
+- Human feedback capture for candidate score disagreement and bootstrap calibration proposals, with append-only history, one latest active label per stable candidate/component, current-rule residuals, historical weight decay, and idempotent proposal evidence.
 - Candidate-only score-review workbench in `src/backstage_agent/ui.py` at `http://127.0.0.1:8765/candidates`, with compact date navigation, exact-day and seven-day windows, a date-ordered candidate list, adaptive single-column source evidence, immutable agent scores, and independently saved component corrections.
 - The desktop candidate workbench starts with a 22/78 list/detail split and supports non-persistent pointer or keyboard resizing; its accessible divider is hidden in the single-column mobile layout.
 - Backstage digest subject dates take precedence over message receipt dates for parsed project dates, so the workbench groups and filters candidates by the date represented by the source digest.
@@ -33,7 +33,7 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - Parser and project-page extraction are being actively hardened against real Backstage digest/page variations.
 - The daily scan path is present and points at `/Users/sarahtxy/dev/backstage_agent`, with launchd retries at 9:00–12:00 when no Backstage email has arrived yet; operational reliability still depends on local machine setup, credentials, virtualenv state, and launchd installation.
 - Dashboard review supports current per-component corrections, optional component reasons, Reset, and stale-version Reconfirm; accepting/rejecting calibration proposals remains CLI/storage-only.
-- Candidate persistence, CLI feedback capture, and calibration proposal storage now exist, but accepting/rejecting calibration proposals and automatically rewriting `scoring_rules.json` remain manual.
+- Bootstrap calibration now handles any active evidence volume with an aggressive plus-or-minus-five-point proposal cap. Accepting/rejecting proposals, automatically rewriting `scoring_rules.json`, and enabling the future learning/mature conservative stages remain manual or unimplemented.
 
 
 
@@ -68,5 +68,6 @@ Build a conservative local automation agent that scans daily Backstage casting e
 - Validate the first scheduled scoring-first run through its logs, macOS notification, and candidate dashboard results.
 - Add run-log and error-reporting improvements for the launchd daily job.
 - Add dashboard support for reviewing and accepting calibration proposals.
+- Add explicit learning and mature calibration stages that reduce adjustment caps and add directional-consistency and outlier-resistant checks after bootstrap behavior has been validated.
 - Add exact-date rebuild/delete commands for safer reruns.
 - Keep expanding tests around real Backstage email and page examples as they appear.

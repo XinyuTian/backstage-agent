@@ -30,7 +30,7 @@ Use this guide to choose the smallest set of files to read for a task.
 - Use `src/backstage_agent/feature_extractor.py` for structured LLM feature extraction that returns facts only, not scores.
 - Use `src/backstage_agent/requirement_matcher.py` for local requirement matching against stored actor facts.
 - Use `src/backstage_agent/scoring.py` for deterministic scores, resolved scoring snapshots, shared corrected-overall recomputation, bands, caps, traces, draft suggestions, and ranking.
-- Use `src/backstage_agent/calibration.py` for merging legacy feedback and current component-correction patterns into scoring-rule proposals.
+- Use `src/backstage_agent/calibration.py` for current-rule residual evaluation, historical evidence weighting, recent-evidence stability-only handling, and bounded bootstrap scoring-rule proposals. Normalized evidence and proposal/evidence persistence live in `src/backstage_agent/storage.py`.
 - Relevant tests: `tests/test_candidate_models.py`, `tests/test_candidate_generation.py`, `tests/test_feature_extractor.py`, `tests/test_requirement_matcher.py`, `tests/test_candidate_scoring.py`, `tests/test_agent_candidate_scoring.py`, `tests/test_candidate_storage.py`, `tests/test_cli_candidates.py`, `tests/test_ui_candidates.py`, and `tests/test_calibration.py`.
 
 ## Storage And Dashboard
