@@ -30,6 +30,20 @@ def match_requirements(
             continue
         requirement = _requirement_dict(raw_requirement)
         semantic_key = _semantic_requirement_key(key, requirement)
+        certainty = str(requirement.get("certainty") or "explicit").strip().lower()
+        if certainty == "inferred":
+            matches.append(
+                RequirementMatch(
+                    requirement_key=semantic_key,
+                    status=RequirementStatus.NOT_APPLICABLE,
+                    required=False,
+                    local_value="",
+                    evidence=str(requirement.get("evidence") or ""),
+                    reason="Inferred requirement is shown for review but not scored.",
+                    score_impact=0,
+                )
+            )
+            continue
         if semantic_key == "gender":
             status, local_value = _evaluate_gender_requirement(profile, requirement)
             evidence = str(requirement.get("evidence") or "")
@@ -37,7 +51,7 @@ def match_requirements(
                 RequirementMatch(
                     requirement_key="gender",
                     status=status,
-                    required=True,
+                    required=bool(requirement.get("required", True)),
                     local_value=local_value,
                     evidence=evidence or _gender_requirement_text(requirement),
                     reason=_reason_for_status(status),

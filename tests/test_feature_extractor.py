@@ -1,7 +1,7 @@
 import pytest
 
 from backstage_agent.candidate_models import CandidateInput
-from backstage_agent.feature_extractor import FeatureExtractor
+from backstage_agent.feature_extractor import FeatureExtractor, _normalize_requirements
 
 
 def test_feature_extractor_returns_features_without_scores(
@@ -114,6 +114,96 @@ def test_feature_extractor_normalizes_list_requirements(
 
     assert features.requirements["gender_male"]["required"] is True
     assert features.requirements["available_july_23"]["evidence"] == "Available July 23"
+
+
+def test_feature_extractor_splits_explicit_gender_and_age_from_numbered_requirement(
+    settings_factory,
+    actor_profile_factory,
+    casting_notice_factory,
+    fake_chat_client_factory,
+):
+    payload = {
+        "role_type": "commercial",
+        "project_type": "commercial",
+        "requirements": {
+            "requirement_1": {
+                "requirement": "Male, 18-28",
+                "evidence": "Lead, Male, 18-28",
+            }
+        },
+        "project_signals": {},
+        "compensation": {},
+        "uncertainty": {},
+        "evidence_snippets": ["Lead, Male, 18-28"],
+    }
+    extractor = FeatureExtractor(settings_factory(), actor_profile_factory())
+    extractor._client = fake_chat_client_factory([payload])
+    candidate = CandidateInput.role_candidate(
+        project_id=1,
+        role_id=2,
+        project_key="commercial",
+        role_key="male-lead",
+        title="Commercial, San Francisco — Male Lead",
+        notice=casting_notice_factory(),
+    )
+
+    features = extractor.extract(candidate)
+
+    assert features.requirements == {
+        "gender": {
+            "value": "Male",
+            "required": True,
+            "evidence": "Lead, Male, 18-28",
+            "certainty": "explicit",
+        },
+        "age_range": {
+            "value": "18-28",
+            "required": True,
+            "evidence": "Lead, Male, 18-28",
+            "certainty": "explicit",
+        },
+    }
+
+
+def test_normalize_requirements_does_not_invent_numeric_age_from_qualitative_text():
+    requirements = _normalize_requirements(
+        {
+            "requirement_1": {
+                "requirement": "Young-looking male lead",
+                "evidence": "Young-looking male lead",
+            }
+        }
+    )
+
+    assert requirements["gender"] == {
+        "value": "Male",
+        "required": True,
+        "evidence": "Young-looking male lead",
+        "certainty": "explicit",
+    }
+    assert "age_range" not in requirements
+    assert requirements["requirement_1"]["requirement"] == "Young-looking lead"
+    assert requirements["requirement_1"]["certainty"] == "ambiguous"
+
+
+def test_normalize_requirements_preserves_unrelated_ambiguous_requirement():
+    requirements = _normalize_requirements(
+        {
+            "requirement_1": {
+                "requirement": "Natural screen presence",
+                "evidence": "Natural, authentic screen presence.",
+            }
+        }
+    )
+
+    assert requirements == {
+        "requirement_1": {
+            "requirement": "Natural screen presence",
+            "evidence": "Natural, authentic screen presence.",
+            "required": False,
+            "certainty": "ambiguous",
+        }
+    }
 
 
 def test_feature_extractor_normalizes_loose_fact_containers(
